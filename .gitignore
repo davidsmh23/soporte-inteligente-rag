@@ -1,0 +1,10 @@
+# Claves y secretos
+.env
+
+# Bases de datos y datos locales
+chroma-data/
+obsidian_vault/
+
+# Archivos de Python
+__pycache__/
+*.pyc

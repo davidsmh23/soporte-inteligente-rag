@@ -1,0 +1,29 @@
+services:
+  # Base de Datos Vectorial
+  chromadb:
+    image: chromadb/chroma:0.4.24
+    ports:
+      - "8033:8000"
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+
+  # Web App y Orquestador (LangChain + Codex)
+  web-agent:
+    image: davidsmh233/soporte-vault
+    build: .
+    ports:
+      - "8501:8501" # Puerto por defecto de Streamlit
+    volumes:
+      - ./app.py:/app/app.py
+      - ./obsidian_vault:/app/obsidian_vault # Conecta tu Obsidian local al contenedor
+    environment:
+      - CHROMA_SERVER_HOST=chromadb
+      - CHROMA_SERVER_HTTP_PORT=8000
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    depends_on:
+      - chromadb
+
+volumes:
+  chroma-data:
