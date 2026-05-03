@@ -11,7 +11,7 @@ services:
 
   # Web App y Orquestador (LangChain + Codex)
   web-agent:
-    image: davidsmh233/soporte-vault
+    image: davidsmh233/soporte-inteligente-rag
     build: .
     ports:
       - "8501:8501" # Puerto por defecto de Streamlit
