@@ -3,7 +3,7 @@
 
 # Bases de datos y datos locales
 chroma-data/
-obsidian_vault/
+#obsidian_vault/
 
 # Archivos de Python
 __pycache__/
