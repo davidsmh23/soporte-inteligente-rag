@@ -19,11 +19,36 @@ services:
     volumes:
       - ./obsidian_vault:/app/obsidian_vault:ro
     environment:
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
     depends_on:
       - chromadb
+
+  # MCP server (remote streamable HTTP style endpoint for Codex CLI clients)
+  mcp-server:
+    image: davidsmh233/soporte-inteligente-rag-mcp-server
+    build:
+      context: ./mcp_server
+    ports:
+      - "8100:8100"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - MCP_BEARER_TOKEN=${MCP_BEARER_TOKEN}
+    depends_on:
+      - backend
+
+  # Session gateway (server-side bridge to local Codex CLI agents)
+  session-gateway:
+    image: davidsmh233/soporte-inteligente-rag-session-gateway
+    build:
+      context: ./session_gateway
+    ports:
+      - "9000:9000"
+    environment:
+      - SESSION_USER_TOKENS=${SESSION_USER_TOKENS}
+      - SESSION_SHARED_TOKEN=${SESSION_SHARED_TOKEN}
 
   # Interfaz web (Streamlit)
   frontend:
@@ -34,8 +59,12 @@ services:
       - "8501:8501"
     environment:
       - BACKEND_URL=http://backend:8000
+      - GATEWAY_URL=http://session-gateway:9000
+      - DEFAULT_USER_ID=${DEFAULT_USER_ID:-demo}
+      - DEFAULT_USER_TOKEN=${DEFAULT_USER_TOKEN:-demo-token}
     depends_on:
       - backend
+      - session-gateway
 
 volumes:
   chroma-data:
