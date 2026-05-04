@@ -1,5 +1,5 @@
 services:
-  # Base de Datos Vectorial
+  # Base de datos vectorial
   chromadb:
     image: chromadb/chroma:0.4.24
     ports:
@@ -9,21 +9,33 @@ services:
     environment:
       - IS_PERSISTENT=TRUE
 
-  # Web App y Orquestador (LangChain + Codex)
-  web-agent:
-    image: davidsmh233/soporte-inteligente-rag
-    build: .
+  # API Backend (FastAPI + LangChain + RAG)
+  backend:
+    image: davidsmh233/soporte-inteligente-rag-backend
+    build:
+      context: ./backend
     ports:
-      - "8501:8501" # Puerto por defecto de Streamlit
+      - "8502:8000"
     volumes:
-      - ./app.py:/app/app.py
-      - ./obsidian_vault:/app/obsidian_vault # Conecta tu Obsidian local al contenedor
+      - ./obsidian_vault:/app/obsidian_vault:ro
     environment:
-      - CHROMA_SERVER_HOST=chromadb
-      - CHROMA_SERVER_HTTP_PORT=8000
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
     depends_on:
       - chromadb
+
+  # Interfaz web (Streamlit)
+  frontend:
+    image: davidsmh233/soporte-inteligente-rag-frontend
+    build:
+      context: ./frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
 
 volumes:
   chroma-data:

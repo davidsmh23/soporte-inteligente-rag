@@ -1,0 +1,8 @@
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+langchain==0.1.13
+langchain-community==0.0.38
+langchain-text-splitters==0.0.2
+chromadb==0.4.24
+tiktoken==0.6.0
+langchain-google-genai==1.0.1
