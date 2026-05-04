@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from models.knowledge import IndexResponse
-from services.rag_service import index_vault
+from backend.models.knowledge import IndexResponse
+from backend.services.rag_service import index_vault
 
 router = APIRouter()
 

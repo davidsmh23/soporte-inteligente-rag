@@ -1,6 +1,6 @@
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 
-from config import settings
+from backend.config import settings
 
 
 def get_llm() -> ChatGoogleGenerativeAI:

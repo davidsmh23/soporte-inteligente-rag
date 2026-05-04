@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 
-from models.chat import ChatRequest, ChatResponse
-from services.rag_service import process_chat
+from backend.models.chat import ChatRequest, ChatResponse
+from backend.services.rag_service import process_chat
 
 router = APIRouter()
 

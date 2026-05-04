@@ -1,8 +1,8 @@
 from langchain_community.vectorstores import Chroma
 import chromadb
 
-from config import settings
-from services.llm_service import get_embeddings
+from backend.config import settings
+from backend.services.llm_service import get_embeddings
 
 
 def get_chroma_client() -> chromadb.HttpClient:

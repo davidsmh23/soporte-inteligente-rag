@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from api.v1.router import api_router
+from backend.api.v1.router import api_router
 
 app = FastAPI(
     title="Soporte Inteligente API",

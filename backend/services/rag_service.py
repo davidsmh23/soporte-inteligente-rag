@@ -6,11 +6,11 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from config import settings
-from models.chat import ChatResponse, Message, MessageRole, TriageRoute
-from models.knowledge import IndexResponse
-from services.llm_service import get_llm
-from services.vectordb_service import get_vector_store
+from backend.config import settings
+from backend.models.chat import ChatResponse, Message, MessageRole, TriageRoute
+from backend.models.knowledge import IndexResponse
+from backend.services.llm_service import get_llm
+from backend.services.vectordb_service import get_vector_store
 
 
 def index_vault() -> IndexResponse:
