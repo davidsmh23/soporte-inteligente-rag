@@ -1,0 +1,5 @@
+Hola equipo, tenemos un problema crítico. El sistema nos está dando un error
+"FATAL: remaining connection slots are reserved". La aplicación principal se ha
+caído y los usuarios no pueden acceder. ¿Qué hacemos?
+
+-- Resolución esperada: obsidian_vault/error_postgres_conexiones.md (#2055)

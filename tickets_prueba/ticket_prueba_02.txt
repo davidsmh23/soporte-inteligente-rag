@@ -1,0 +1,6 @@
+Buenos días. Soy Carlos del equipo de DevOps. Intentamos conectarnos por SSH
+al servidor prod-app-02 y nos da "Connection refused" instantáneamente. El
+servidor responde a ping así que no está caído del todo. Los otros servidores
+van bien. ¿Puede alguien ayudarnos urgente?
+
+-- Resolución esperada: obsidian_vault/error_ssh_conexion_rechazada.md (#2401)

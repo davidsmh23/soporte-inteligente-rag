@@ -1,0 +1,7 @@
+Hola. Tenemos un problema con la API en producción. Aproximadamente 1 de cada
+3 peticiones devuelve un 502 Bad Gateway. Empezó justo después del despliegue
+de hoy a las 2 de la tarde. El servicio anterior funcionaba perfectamente.
+Los logs de la aplicación no muestran errores, parece que el problema está
+antes de que llegue a la app.
+
+-- Resolución esperada: obsidian_vault/nginx_502_bad_gateway.md (#2367)

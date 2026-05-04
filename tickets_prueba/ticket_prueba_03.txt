@@ -1,0 +1,6 @@
+Hola soporte. Varios usuarios están llamando porque al entrar a la intranet el
+navegador les muestra una pantalla roja con el mensaje "Tu conexión no es
+privada" y un código NET::ERR_CERT_DATE_INVALID. Esto le pasa a todo el mundo,
+tanto en Chrome como en Edge. La web lleva caída desde esta mañana.
+
+-- Resolución esperada: obsidian_vault/certificado_ssl_expirado.md (#2415)

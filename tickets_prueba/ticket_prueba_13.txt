@@ -1,0 +1,6 @@
+Hola. Desde que cambiaron el router la semana pasada, en nuestra planta no
+podemos acceder al servidor de archivos ni a la intranet. Sí que tenemos
+internet normal. El de IT que vino dijo que era algo del DNS pero no lo
+arregló del todo. ¿Puede alguien explicarnos qué hacer?
+
+-- Resolución esperada: obsidian_vault/dns_resolucion_interna_falla.md (#2345)

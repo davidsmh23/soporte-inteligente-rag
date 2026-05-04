@@ -1,0 +1,6 @@
+Buenas tardes. Soy Ana del departamento de ventas. Llevo desde ayer sin poder
+entrar a mi ordenador ni al correo. Me sale "Tu cuenta ha sido bloqueada,
+contacta con tu administrador". No he cambiado mi contraseña ni he hecho nada
+raro. Es bastante urgente porque tengo reuniones con clientes.
+
+-- Resolución esperada: obsidian_vault/usuario_bloqueado_active_directory.md (#2298)

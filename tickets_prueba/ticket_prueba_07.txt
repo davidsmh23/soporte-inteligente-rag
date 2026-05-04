@@ -1,0 +1,6 @@
+Buenos días. El servidor de producción AppServer-01 ha lanzado una alerta de
+disco al 99% de uso. Revisando un poco veo que la carpeta /var/log/app tiene
+archivos enormes de hace meses. ¿Cómo limpio esto de forma segura sin romper
+nada? ¿Y cómo evito que vuelva a pasar?
+
+-- Resolución esperada: obsidian_vault/limpieza_logs_servidor.md (#2310)

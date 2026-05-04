@@ -1,0 +1,6 @@
+Ticket urgente. Hemos hecho un docker compose up del entorno de staging y uno
+de los contenedores sale a los pocos segundos. Los logs dicen algo de una
+variable de entorno que no encuentra, pero no sé muy bien cómo interpretarlo.
+Los otros contenedores (postgres, redis) arrancan sin problema.
+
+-- Resolución esperada: obsidian_vault/docker_contenedor_no_arranca.md (#2388)

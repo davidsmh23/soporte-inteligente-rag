@@ -1,0 +1,6 @@
+Buenas tardes. Soy Pedro de ventas. Esta mañana no pude entrar a mi correo
+de empresa ni a Google Drive. Me aparece el mensaje "Tu cuenta ha sido
+suspendida". No entiendo por qué, ayer funcionaba todo bien. Tengo una
+presentación importante mañana y necesito acceder a mis archivos.
+
+-- Resolución esperada: obsidian_vault/cuenta_gmail_workspace_suspendida.md (#2413)

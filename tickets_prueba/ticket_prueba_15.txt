@@ -1,0 +1,6 @@
+Hola equipo de soporte. Nadie en la empresa puede conectarse a la VPN desde
+casa desde esta mañana. El cliente dice "Credenciales inválidas" aunque las
+contraseñas son correctas, lo he verificado yo mismo. Los que están en la
+oficina trabajan normal. Hay unas 80 personas afectadas en remoto. Es crítico.
+
+-- Resolución esperada: obsidian_vault/vpn_error_autenticacion_radius.md (#2349)

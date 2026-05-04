@@ -1,0 +1,5 @@
+Hola soporte. Tenemos un pod en Kubernetes en el namespace de staging que no
+para de reiniciarse. El kubectl get pods muestra "CrashLoopBackOff" y ya lleva
+más de 20 reinicios. Es el pod del servicio de API. ¿Cómo lo diagnostico?
+
+-- Resolución esperada: obsidian_vault/kubernetes_pod_crashloopbackoff.md (#2422)

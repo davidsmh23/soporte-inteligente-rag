@@ -1,0 +1,7 @@
+Hola, soy del equipo de backend. Llevamos toda la semana con las consultas a
+la base de datos MySQL tardando entre 30 y 60 segundos. La tabla de pedidos
+tiene millones de registros. En el entorno de desarrollo con pocos datos va
+perfectamente. Necesitamos solución urgente porque está afectando a usuarios
+en producción.
+
+-- Resolución esperada: obsidian_vault/mysql_consultas_lentas.md (#2356)

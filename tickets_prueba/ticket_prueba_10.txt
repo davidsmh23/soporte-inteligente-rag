@@ -1,0 +1,6 @@
+Buenas. Tengo un problema con Zoom. Cada vez que intento compartir pantalla
+en una reunión me sale un mensaje diciendo que Zoom no tiene permiso para
+grabar la pantalla y que lo active en las preferencias del sistema. Estoy en
+un Mac. He buscado pero no encuentro dónde activarlo.
+
+-- Resolución esperada: obsidian_vault/zoom_pantalla_compartida_no_funciona.md (#2328)

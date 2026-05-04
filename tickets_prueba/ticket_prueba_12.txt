@@ -1,0 +1,6 @@
+Ticket crítico. La aplicación está lanzando errores "OOM command not allowed"
+al intentar guardar sesiones de usuario. Parece que es algo de Redis. El
+servicio de sesiones ha caído y los usuarios están siendo deslogueados
+continuamente. ¿Qué podemos hacer?
+
+-- Resolución esperada: obsidian_vault/redis_memoria_agotada.md (#2378)

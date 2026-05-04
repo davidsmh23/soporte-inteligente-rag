@@ -1,0 +1,6 @@
+Hola equipo. Desde este mañana, Outlook me muestra "Conectado" abajo pero no
+me llegan correos nuevos. Mis compañeros sí reciben correos y me dicen que
+les llegan los míos. He probado a cerrar y abrir Outlook varias veces pero
+nada. Uso Windows 11 con Office 365.
+
+-- Resolución esperada: obsidian_vault/outlook_no_sincroniza_correo.md (#2311)

@@ -1,0 +1,25 @@
+# Variables de entorno y secretos (¡Crucial para la seguridad!)
+.env
+.env.*
+
+# Carpetas de datos locales (Se montan por volumen, no van en la imagen)
+obsidian_vault/
+chroma-data/
+
+# Repositorio Git
+.git/
+.gitignore
+
+# Archivos Markdown de documentación
+Readme.md
+
+# Archivos de caché de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Entornos virtuales (si alguna vez usas uno localmente)
+venv/
+.venv/
+env/
