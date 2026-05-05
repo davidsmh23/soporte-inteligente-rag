@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import shutil
 import tempfile
 import math
@@ -81,25 +82,88 @@ def _build_chat_prompt(
     ticket_text: str,
     history: list[dict[str, Any]],
 ) -> str:
-    user_history: list[str] = []
-    if history:
-        for item in history[-10:]:
-            role = str(item.get("role", "")).strip().lower()
-            content = str(item.get("content", "")).strip()
-            if role == "user" and content:
-                user_history.append(content)
-    # Fallback conversational mode should be as close as possible to a direct Codex CLI prompt.
-    if len(user_history) <= 1:
-        return ticket_text.strip()
+    cleaned = ticket_text.strip()
+    if not cleaned:
+        return ""
 
-    prior = user_history[:-1]
-    prior_text = "\n".join(f"- {line}" for line in prior)
-    return (
-        "Contexto previo del usuario:\n"
-        f"{prior_text}\n\n"
-        "Mensaje actual:\n"
-        f"{ticket_text.strip()}"
-    )
+    prev_user, prev_assistant = _last_turn_pair(history, current_user_message=cleaned)
+
+    # Default: direct prompt (closest behavior to Codex CLI chat).
+    if not _looks_followup(cleaned):
+        return cleaned
+
+    if not prev_user and not prev_assistant:
+        return cleaned
+
+    rewritten = _rewrite_followup_as_standalone(prev_user, cleaned)
+    return rewritten or cleaned
+
+
+def _looks_followup(text: str) -> bool:
+    lowered = text.lower().strip()
+    if lowered.startswith("y "):
+        return True
+    if lowered in {"y?", "y", "y eso?", "y luego?"}:
+        return True
+    return len(lowered) <= 40 and lowered.startswith(("y ", "tambien ", "y en "))
+
+
+def _rewrite_followup_as_standalone(prev_user: str, followup: str) -> str:
+    prev = prev_user.strip()
+    fol = followup.strip()
+    if not prev or not fol:
+        return fol
+
+    # Case 1: "y X?" -> keep previous environment/scope (e.g., "en linux")
+    m_follow = re.match(r"(?i)^y\s+(.+?)[\?!.]?$", fol)
+    m_prev_install = re.match(r"(?i)^como\s+instal[oa]\s+.+?(\s+en\s+.+?)?[\?!.]?$", prev)
+    if m_follow and m_prev_install:
+        target = m_follow.group(1).strip()
+        scope = (m_prev_install.group(1) or "").strip()
+        if scope:
+            return f"como instalo {target} {scope}?"
+        return f"como instalo {target}?"
+
+    # Case 2: generic short follow-up -> embed previous question explicitly but as one direct ask.
+    return f"Con base en esta pregunta previa: {prev}\nResponde ahora a esta nueva pregunta concreta: {fol}"
+
+
+def _last_turn_pair(history: list[dict[str, Any]], current_user_message: str) -> tuple[str, str]:
+    if not history:
+        return "", ""
+
+    prev_user = ""
+    prev_assistant = ""
+    current_norm = current_user_message.strip()
+
+    # Walk backwards and extract the previous assistant and previous user before current message.
+    seen_current_user = False
+    for item in reversed(history):
+        role = str(item.get("role", "")).strip().lower()
+        content = str(item.get("content", "")).strip()
+        if not content:
+            continue
+
+        if role == "assistant" and content.startswith("Hola. Envia un ticket."):
+            continue
+
+        if role == "user" and not seen_current_user:
+            if content == current_norm:
+                seen_current_user = True
+                continue
+            # If history does not contain current message verbatim, treat this as previous user anyway.
+            seen_current_user = True
+
+        if seen_current_user:
+            if not prev_assistant and role == "assistant":
+                prev_assistant = content
+                continue
+            if not prev_user and role == "user":
+                prev_user = content
+                if prev_assistant:
+                    break
+
+    return prev_user, prev_assistant
 
 
 def _prompt_preview(prompt: str, max_len: int = 600) -> str:
@@ -331,6 +395,7 @@ async def _run_codex_and_stream(
     cmd = [
         codex_bin,
         "exec",
+        "--ephemeral",
         "--json",
         "--output-schema",
         schema_path,
