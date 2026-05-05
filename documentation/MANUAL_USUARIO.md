@@ -99,26 +99,26 @@ Instalar dependencia:
 pip install -r requirements.txt
 ```
 
-Variables recomendadas:
+Variables recomendadas (anonimizadas):
 
 Linux/macOS:
 
 ```bash
 export SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
-export SESSION_USER_ID="demo"
-export SESSION_USER_TOKEN="demo-token"
+export SESSION_USER_ID="<USER_ID>"
+export SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
 export SUPPORT_MCP_URL="http://localhost:8100/mcp"
-export SUPPORT_MCP_TOKEN="<MCP_BEARER_TOKEN>"
+export SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
 ```
 
 PowerShell:
 
 ```powershell
 $env:SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
-$env:SESSION_USER_ID="demo"
-$env:SESSION_USER_TOKEN="demo-token"
+$env:SESSION_USER_ID="<USER_ID>"
+$env:SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
 $env:SUPPORT_MCP_URL="http://localhost:8100/mcp"
-$env:SUPPORT_MCP_TOKEN="<MCP_BEARER_TOKEN>"
+$env:SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
 ```
 
 Arranque:
@@ -128,6 +128,38 @@ python main.py
 ```
 
 Nota: si `SUPPORT_MCP_TOKEN` no se exporta, `local_agent` intenta leer `MCP_BEARER_TOKEN` desde `../.env`.
+
+Ejemplo completo de arranque (anonimizado):
+
+Linux/macOS:
+
+```bash
+cd "/ruta/al/repositorio/soporte-inteligente-rag/local_agent"
+source .venv/bin/activate
+
+export SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
+export SESSION_USER_ID="<USER_ID>"
+export SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
+export SUPPORT_MCP_URL="http://localhost:8100/mcp"
+export SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
+
+python main.py
+```
+
+Windows (PowerShell):
+
+```powershell
+cd "C:\ruta\al\repositorio\soporte-inteligente-rag\local_agent"
+.venv\Scripts\Activate.ps1
+
+$env:SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
+$env:SESSION_USER_ID="<USER_ID>"
+$env:SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
+$env:SUPPORT_MCP_URL="http://localhost:8100/mcp"
+$env:SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
+
+python main.py
+```
 
 ## 7. Uso diario en Streamlit
 

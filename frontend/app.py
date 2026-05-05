@@ -272,10 +272,17 @@ with left_col:
                         if snippet:
                             st.caption(snippet)
 
-    user_input = st.chat_input("Escribe tu mensaje...")
-    if user_input:
-        messages.append({"role": "user", "content": user_input, "references": [], "token_usage": None})
-        st.session_state.messages_by_conversation[active_conversation_id] = messages
+user_input = st.chat_input("Escribe tu mensaje...")
+if user_input and st.session_state.active_conversation_id:
+    active_conversation_id = st.session_state.active_conversation_id
+    active_codex_session_id = st.session_state.active_codex_session_id
+    messages = st.session_state.messages_by_conversation.get(active_conversation_id, [_welcome_message()])
+    messages.append({"role": "user", "content": user_input, "references": [], "token_usage": None})
+    st.session_state.messages_by_conversation[active_conversation_id] = messages
+
+    with left_col:
+        with st.chat_message("user"):
+            st.markdown(user_input)
 
         with st.chat_message("assistant"):
             placeholder = st.empty()

@@ -7,6 +7,8 @@ import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 import websockets
 
@@ -20,10 +22,42 @@ SESSION_USER_ID = os.environ.get("SESSION_USER_ID", "demo")
 SESSION_USER_TOKEN = os.environ.get("SESSION_USER_TOKEN", "demo-token")
 CODEX_EXEC_TIMEOUT_SEC = int(os.environ.get("CODEX_EXEC_TIMEOUT_SEC", "300"))
 DIAGNOSTIC_VERBOSE = os.environ.get("DIAGNOSTIC_VERBOSE", "1").strip() not in {"0", "false", "False"}
+SUPPORT_MCP_URL = os.environ.get("SUPPORT_MCP_URL", "http://localhost:8100/mcp").strip()
+SUPPORT_MCP_TIMEOUT_SEC = int(os.environ.get("SUPPORT_MCP_TIMEOUT_SEC", "45"))
+SUPPORT_LOOKUP_K = int(os.environ.get("SUPPORT_LOOKUP_K", "3"))
+_raw_threshold = os.environ.get("SUPPORT_LOOKUP_THRESHOLD", "").strip()
+SUPPORT_LOOKUP_THRESHOLD = float(_raw_threshold) if _raw_threshold else None
 
 SESSION_MODE_CHAT = "chat_generico"
+SESSION_MODE_TRIAGE = "triage_inicial"
+SESSION_MODE_RESOLVED = "resuelto_por_referencia"
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 UUID_INLINE_RE = re.compile(r"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
+CONVERSATION_MODE: dict[str, str] = {}
+THREAD_EVENT_TYPES = {"thread.started", "thread_name_updated", "thread.updated"}
+SESSION_UUID_KEYS = ("thread_id", "session_id", "id")
+NULLISH_SESSION_VALUES = {"none", "null", "undefined"}
+CODEX_BIN_CANDIDATES = ("codex.cmd", "codex.exe", "codex")
+MODE_LABELS = {
+    SESSION_MODE_TRIAGE: "Triage inicial",
+    SESSION_MODE_CHAT: "Chat generico",
+    SESSION_MODE_RESOLVED: "Resuelto por referencia",
+}
+
+
+async def _send_json(websocket, payload: dict[str, Any]) -> None:
+    await websocket.send(json.dumps(payload))
+
+
+async def _send_error(websocket, request_id: str, message: str, *, code: str | None = None) -> None:
+    payload: dict[str, Any] = {
+        "type": "error",
+        "request_id": request_id,
+        "message": message,
+    }
+    if code:
+        payload["code"] = code
+    await _send_json(websocket, payload)
 
 
 def _count_tokens(text: str) -> tuple[int, str]:
@@ -87,7 +121,7 @@ def _find_uuid(value: Any) -> str | None:
     if isinstance(value, str) and UUID_RE.match(value.strip()):
         return value.strip()
     if isinstance(value, dict):
-        for key in ("thread_id", "session_id", "id"):
+        for key in SESSION_UUID_KEYS:
             candidate = value.get(key)
             if isinstance(candidate, str) and UUID_RE.match(candidate.strip()):
                 return candidate.strip()
@@ -112,10 +146,10 @@ def _extract_thread_id(event: Any) -> str | None:
 
     if payload:
         payload_type = str(payload.get("type") or "")
-        if payload_type in {"thread.started", "thread_name_updated", "thread.updated"}:
+        if payload_type in THREAD_EVENT_TYPES:
             return _find_uuid(payload)
 
-    if event_type in {"thread.started", "thread_name_updated", "thread.updated"}:
+    if event_type in THREAD_EVENT_TYPES:
         return _find_uuid(event)
 
     return _find_uuid(event)
@@ -143,7 +177,7 @@ def _normalize_codex_session_id(value: Any) -> str | None:
     if not raw:
         return None
     lowered = raw.lower()
-    if lowered in {"none", "null", "undefined"}:
+    if lowered in NULLISH_SESSION_VALUES:
         return None
     if UUID_RE.match(raw):
         return raw
@@ -190,35 +224,30 @@ def _get_new_session_id(before: list[str], after: list[str]) -> str | None:
 async def _trace(websocket, request_id: str, detail: str, *, force: bool = False):
     if not (DIAGNOSTIC_VERBOSE or force):
         return
-    await websocket.send(
-        json.dumps(
-            {
-                "type": "tool_trace",
-                "request_id": request_id,
-                "detail": detail,
-            }
-        )
+    await _send_json(
+        websocket,
+        {
+            "type": "tool_trace",
+            "request_id": request_id,
+            "detail": detail,
+        },
     )
 
 
 def _mode_label(mode: str) -> str:
-    labels = {
-        SESSION_MODE_CHAT: "Chat generico",
-    }
-    return labels.get(mode, mode)
+    return MODE_LABELS.get(mode, mode)
 
 
 async def _send_mode_update(websocket, request_id: str, conversation_id: str, mode: str):
-    await websocket.send(
-        json.dumps(
-            {
-                "type": "mode_update",
-                "request_id": request_id,
-                "conversation_id": conversation_id,
-                "mode": mode,
-                "label": _mode_label(mode),
-            }
-        )
+    await _send_json(
+        websocket,
+        {
+            "type": "mode_update",
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "mode": mode,
+            "label": _mode_label(mode),
+        },
     )
 
 
@@ -227,11 +256,235 @@ def _resolve_codex_bin() -> str | None:
     if explicit and Path(explicit).exists():
         return explicit
 
-    for candidate in ["codex", "codex.exe"]:
+    for candidate in CODEX_BIN_CANDIDATES:
         path = shutil.which(candidate)
         if path:
             return path
     return None
+
+
+def _load_value_from_root_env(key: str) -> str | None:
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            name, value = line.split("=", 1)
+            if name.strip() != key:
+                continue
+            return value.strip().strip('"').strip("'")
+    except OSError:
+        return None
+    return None
+
+
+def _build_codex_cmd(codex_bin: str, output_path: str, known_session: str | None) -> list[str]:
+    # Hard security boundary: no file edits and no approval escalation.
+    safe_exec_flags = [
+        "-c",
+        'sandbox_mode="read-only"',
+        "-c",
+        'approval_policy="never"',
+    ]
+    if known_session:
+        return [
+            codex_bin,
+            "exec",
+            "resume",
+            *safe_exec_flags,
+            "--json",
+            "-o",
+            output_path,
+            known_session,
+            "-",
+        ]
+    return [
+        codex_bin,
+        "exec",
+        *safe_exec_flags,
+        "--json",
+        "-o",
+        output_path,
+        "-",
+    ]
+
+
+async def _send_conversation_bound(
+    websocket,
+    request_id: str,
+    conversation_id: str,
+    codex_session_id: str,
+) -> None:
+    await _send_json(
+        websocket,
+        {
+            "type": "conversation_bound",
+            "request_id": request_id,
+            "conversation_id": conversation_id,
+            "codex_session_id": codex_session_id,
+        },
+    )
+
+
+def _build_resume_unavailable_payload(request_id: str, return_code: int, stderr_text: str) -> dict[str, Any]:
+    return {
+        "type": "error",
+        "request_id": request_id,
+        "message": f"codex exec fallo con codigo {return_code}: {stderr_text[:2000]}",
+    }
+
+
+def _is_resume_error(known_session: str | None, stderr_text: str, accumulated: str) -> bool:
+    lowered = f"{stderr_text} {accumulated}".lower()
+    return bool(known_session) and (
+        "resume" in lowered and ("not found" in lowered or "no session" in lowered)
+        or "unknown session" in lowered
+        or "invalid session" in lowered
+    )
+
+
+async def _send_final_answer(
+    websocket,
+    request_id: str,
+    answer: str,
+    references: list[dict[str, Any]],
+    token_usage: dict[str, Any],
+    codex_session_id: str | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "type": "final_answer",
+        "request_id": request_id,
+        "answer": answer,
+        "references": references,
+        "token_usage": token_usage,
+    }
+    if codex_session_id is not None:
+        payload["codex_session_id"] = codex_session_id
+    await _send_json(websocket, payload)
+
+
+def _resolve_support_mcp_token() -> str:
+    token = os.environ.get("SUPPORT_MCP_TOKEN", "").strip()
+    if token:
+        return token
+    fallback = _load_value_from_root_env("MCP_BEARER_TOKEN")
+    return (fallback or "").strip()
+
+
+def _sync_lookup_ticket(ticket_text: str) -> dict[str, Any]:
+    token = _resolve_support_mcp_token()
+    if not SUPPORT_MCP_URL:
+        raise RuntimeError("SUPPORT_MCP_URL vacia.")
+    if not token:
+        raise RuntimeError("SUPPORT_MCP_TOKEN/MCP_BEARER_TOKEN no disponible.")
+
+    arguments: dict[str, Any] = {
+        "ticket_text": ticket_text,
+        "k": SUPPORT_LOOKUP_K,
+    }
+    if SUPPORT_LOOKUP_THRESHOLD is not None:
+        arguments["threshold"] = SUPPORT_LOOKUP_THRESHOLD
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "support_lookup_ticket",
+            "arguments": arguments,
+        },
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    req = urllib_request.Request(
+        url=SUPPORT_MCP_URL,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=SUPPORT_MCP_TIMEOUT_SEC) as resp:
+            response_text = resp.read().decode("utf-8", errors="replace")
+    except urllib_error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code}: {error_body[:600]}") from exc
+    except urllib_error.URLError as exc:
+        raise RuntimeError(f"conexion fallida: {exc}") from exc
+
+    rpc = json.loads(response_text)
+    if not isinstance(rpc, dict):
+        raise RuntimeError("respuesta MCP invalida (no-objeto).")
+    if isinstance(rpc.get("error"), dict):
+        rpc_error = rpc["error"]
+        raise RuntimeError(f"RPC {rpc_error.get('code')}: {rpc_error.get('message')}")
+
+    result = rpc.get("result", {})
+    structured = result.get("structuredContent") if isinstance(result, dict) else None
+    if isinstance(structured, dict):
+        return structured
+
+    content = result.get("content") if isinstance(result, dict) else None
+    if isinstance(content, list) and content:
+        first = content[0]
+        if isinstance(first, dict) and isinstance(first.get("text"), str):
+            parsed = json.loads(first["text"])
+            if isinstance(parsed, dict):
+                return parsed
+    raise RuntimeError("respuesta MCP sin structuredContent util.")
+
+
+def _build_triage_references(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for match in matches:
+        if not isinstance(match, dict):
+            continue
+        refs.append(
+            {
+                "source": str(match.get("source") or "unknown"),
+                "ticket_id": match.get("ticket_id"),
+                "snippet": str(match.get("snippet") or ""),
+                "problem_title": match.get("problem_title"),
+                "solution_steps": match.get("solution_steps") if isinstance(match.get("solution_steps"), list) else [],
+                "score": match.get("score"),
+            }
+        )
+    return refs
+
+
+def _build_triage_answer(match: dict[str, Any]) -> str:
+    ticket_id = str(match.get("ticket_id") or "").strip()
+    source = str(match.get("source") or "unknown_source").strip()
+    problem_title = str(match.get("problem_title") or "").strip()
+    snippet = str(match.get("snippet") or "").strip()
+    steps_raw = match.get("solution_steps")
+    steps = steps_raw if isinstance(steps_raw, list) else []
+    score = match.get("score")
+
+    lines: list[str] = [
+        "He encontrado una incidencia similar en la base de conocimiento.",
+        f"Referencia: {ticket_id or '(sin id_ticket)'} ({source})",
+    ]
+    if problem_title:
+        lines.append(f"Problema relacionado: {problem_title}")
+    if isinstance(score, (int, float)):
+        lines.append(f"Score de similitud: {float(score):.4f}")
+
+    if steps:
+        lines.append("")
+        lines.append("Pasos de solucion registrada:")
+        for idx, step in enumerate(steps, start=1):
+            clean = str(step).strip()
+            if clean:
+                lines.append(f"{idx}. {clean}")
+    elif snippet:
+        lines.append("")
+        lines.append("Fragmento relevante:")
+        lines.append(snippet)
+
+    return "\n".join(lines)
 
 
 async def _run_codex_and_stream(
@@ -243,28 +496,12 @@ async def _run_codex_and_stream(
 ):
     codex_bin = _resolve_codex_bin()
     if not codex_bin:
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "error",
-                    "request_id": request_id,
-                    "message": "No se encontro el binario 'codex' en el cliente local.",
-                }
-            )
-        )
+        await _send_error(websocket, request_id, "No se encontro el binario 'codex' en el cliente local.")
         return
 
     prompt_text = str(prompt or "").strip()
     if not prompt_text:
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "error",
-                    "request_id": request_id,
-                    "message": "Prompt vacio.",
-                }
-            )
-        )
+        await _send_error(websocket, request_id, "Prompt vacio.")
         return
 
     known_session = _normalize_codex_session_id(codex_session_id)
@@ -273,36 +510,21 @@ async def _run_codex_and_stream(
         output_path = output_file.name
 
     before_sessions = _read_recent_session_ids() if not known_session else []
-
-    if known_session:
-        cmd = [
-            codex_bin,
-            "exec",
-            "resume",
-            "--json",
-            "-o",
-            output_path,
-            known_session,
-            prompt_text,
-        ]
-    else:
-        cmd = [
-            codex_bin,
-            "exec",
-            "--json",
-            "-o",
-            output_path,
-            prompt_text,
-        ]
+    cmd = _build_codex_cmd(codex_bin, output_path, known_session)
 
     await _trace(websocket, request_id, f"[prompt_preview] {_prompt_preview(prompt_text)}", force=True)
     await _trace(websocket, request_id, f"[codex_cmd] {' '.join(cmd[:7])} ...", force=True)
 
     process = await asyncio.create_subprocess_exec(
         *cmd,
+        stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+    if process.stdin:
+        process.stdin.write(prompt_text.encode("utf-8"))
+        await process.stdin.drain()
+        process.stdin.close()
 
     accumulated = ""
     streamed_events = 0
@@ -328,29 +550,24 @@ async def _run_codex_and_stream(
                 if not detected_thread_id:
                     detected_thread_id = _extract_uuid_from_text(raw)
                 if detected_thread_id:
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "type": "conversation_bound",
-                                "request_id": request_id,
-                                "conversation_id": conversation_id,
-                                "codex_session_id": detected_thread_id,
-                            }
-                        )
+                    await _send_conversation_bound(
+                        websocket,
+                        request_id=request_id,
+                        conversation_id=conversation_id,
+                        codex_session_id=detected_thread_id,
                     )
 
             event_text = _extract_text(event)
             if event_text:
                 accumulated += event_text + "\n"
                 streamed_events += 1
-                await websocket.send(
-                    json.dumps(
-                        {
-                            "type": "token_delta",
-                            "request_id": request_id,
-                            "delta": event_text + "\n",
-                        }
-                    )
+                await _send_json(
+                    websocket,
+                    {
+                        "type": "token_delta",
+                        "request_id": request_id,
+                        "delta": event_text + "\n",
+                    },
                 )
 
         return_code = await process.wait()
@@ -370,36 +587,22 @@ async def _run_codex_and_stream(
             fallback_thread = _get_new_session_id(before_sessions, after_sessions)
             if fallback_thread:
                 detected_thread_id = fallback_thread
-                await websocket.send(
-                    json.dumps(
-                        {
-                            "type": "conversation_bound",
-                            "request_id": request_id,
-                            "conversation_id": conversation_id,
-                            "codex_session_id": detected_thread_id,
-                        }
-                    )
+                await _send_conversation_bound(
+                    websocket,
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    codex_session_id=detected_thread_id,
                 )
 
         if return_code != 0:
-            lowered = f"{stderr_text} {accumulated}".lower()
-            is_resume_error = bool(known_session) and (
-                "resume" in lowered and ("not found" in lowered or "no session" in lowered)
-                or "unknown session" in lowered
-                or "invalid session" in lowered
-            )
-            payload = {
-                "type": "error",
-                "request_id": request_id,
-                "message": f"codex exec fallo con codigo {return_code}: {stderr_text[:2000]}",
-            }
-            if is_resume_error:
+            payload = _build_resume_unavailable_payload(request_id, return_code, stderr_text)
+            if _is_resume_error(known_session, stderr_text, accumulated):
                 payload["code"] = "agent_unavailable"
                 payload["message"] = (
                     "La sesion de Codex no esta disponible en este agente local. "
                     "Conecta el agente original para continuar esta conversacion."
                 )
-            await websocket.send(json.dumps(payload))
+            await _send_json(websocket, payload)
             return
 
         final_answer = accumulated.strip()
@@ -412,35 +615,121 @@ async def _run_codex_and_stream(
             pass
 
         usage = _build_token_usage(prompt_text, final_answer)
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "final_answer",
-                    "request_id": request_id,
-                    "answer": final_answer,
-                    "references": [],
-                    "token_usage": usage,
-                    "codex_session_id": detected_thread_id,
-                }
-            )
+        await _send_final_answer(
+            websocket,
+            request_id=request_id,
+            answer=final_answer,
+            references=[],
+            token_usage=usage,
+            codex_session_id=detected_thread_id,
         )
     except asyncio.TimeoutError:
         process.kill()
-        await websocket.send(
-            json.dumps(
-                {
-                    "type": "error",
-                    "request_id": request_id,
-                    "message": "Timeout en ejecucion de codex exec.",
-                }
-            )
-        )
+        await _send_error(websocket, request_id, "Timeout en ejecucion de codex exec.")
     finally:
         if output_path:
             try:
                 os.remove(output_path)
             except OSError:
                 pass
+
+
+async def _run_initial_triage(
+    websocket,
+    request_id: str,
+    conversation_id: str,
+    prompt_text: str,
+) -> tuple[bool, str, list[dict[str, Any]]]:
+    await _trace(
+        websocket,
+        request_id,
+        f"[triage_lookup] url={SUPPORT_MCP_URL} k={SUPPORT_LOOKUP_K} threshold={SUPPORT_LOOKUP_THRESHOLD}",
+    )
+    lookup = await asyncio.to_thread(_sync_lookup_ticket, prompt_text)
+    resolved = bool(lookup.get("resolved"))
+    matches_raw = lookup.get("matches")
+    matches = matches_raw if isinstance(matches_raw, list) else []
+    references = _build_triage_references(matches)
+    top_ref = references[0] if references else None
+
+    await _trace(
+        websocket,
+        request_id,
+        (
+            f"[triage_lookup] resolved={resolved} "
+            f"route_hint={lookup.get('route_hint')} "
+            f"top_ticket={top_ref.get('ticket_id') if isinstance(top_ref, dict) else None}"
+        ),
+    )
+    if not resolved or not matches or not isinstance(matches[0], dict):
+        return False, "", references
+
+    answer = _build_triage_answer(matches[0])
+    usage = _build_token_usage(prompt_text, answer)
+    await _send_mode_update(
+        websocket,
+        request_id=request_id,
+        conversation_id=conversation_id,
+        mode=SESSION_MODE_RESOLVED,
+    )
+    await _send_final_answer(
+        websocket,
+        request_id=request_id,
+        answer=answer,
+        references=references,
+        token_usage=usage,
+    )
+    return True, answer, references
+
+
+async def _handle_conversation_mode(
+    websocket,
+    request_id: str,
+    conversation_id: str,
+    prompt: str,
+) -> bool:
+    current_mode = CONVERSATION_MODE.get(conversation_id)
+    if current_mode is None:
+        CONVERSATION_MODE[conversation_id] = SESSION_MODE_TRIAGE
+        await _send_mode_update(
+            websocket,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            mode=SESSION_MODE_TRIAGE,
+        )
+        try:
+            triage_resolved, _, _ = await _run_initial_triage(
+                websocket,
+                request_id=request_id,
+                conversation_id=conversation_id,
+                prompt_text=prompt,
+            )
+        except Exception as exc:
+            await _trace(websocket, request_id, f"[triage_lookup_error] {exc}")
+            triage_resolved = False
+
+        if triage_resolved:
+            CONVERSATION_MODE[conversation_id] = SESSION_MODE_RESOLVED
+            return True
+
+        CONVERSATION_MODE[conversation_id] = SESSION_MODE_CHAT
+        await _send_mode_update(
+            websocket,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            mode=SESSION_MODE_CHAT,
+        )
+        return False
+
+    if current_mode != SESSION_MODE_CHAT:
+        CONVERSATION_MODE[conversation_id] = SESSION_MODE_CHAT
+        await _send_mode_update(
+            websocket,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            mode=SESSION_MODE_CHAT,
+        )
+    return False
 
 
 async def _run_once():
@@ -458,13 +747,14 @@ async def _run_once():
             prompt = str(message.get("prompt", "")).strip()
             conversation_id = str(message.get("conversation_id", "")).strip() or "default-conversation"
             codex_session_id = _normalize_codex_session_id(message.get("codex_session_id"))
-
-            await _send_mode_update(
+            if await _handle_conversation_mode(
                 websocket,
                 request_id=request_id,
                 conversation_id=conversation_id,
-                mode=SESSION_MODE_CHAT,
-            )
+                prompt=prompt,
+            ):
+                continue
+
             await _run_codex_and_stream(
                 websocket,
                 request_id=request_id,
