@@ -11,7 +11,8 @@ Sistema de soporte tecnico con RAG sobre Obsidian + flujo conversacional con Cod
   - pasos completos de `# Solucion Exitosa`
 - Si no hay match:
   - fallback automatico a chat conversacional con Codex.
-- `local_agent` ejecuta siempre lookup MCP antes de `codex exec`.
+- `local_agent` ejecuta lookup MCP solo en el primer mensaje de cada `session_id`.
+- Si ese primer lookup no resuelve (o falla), la sesion pasa a `chat_generico` y no repite triage en esa sesion.
 - UI muestra trazas MCP/Codex y referencias por ticket.
 - Corregido error MCP `422` en `POST /mcp` (parseo de body JSON-RPC).
 
@@ -30,9 +31,10 @@ Flujo:
 
 1. Streamlit envia prompt a `session-gateway`.
 2. `session-gateway` lo enruta al `local_agent` por WebSocket.
-3. `local_agent` llama `support_lookup_ticket` (MCP).
-4. Si `resolved=true`, responde con solucion historica referenciada.
-5. Si `resolved=false`, ejecuta `codex exec` conversacional.
+3. En el primer mensaje de un `session_id`, `local_agent` llama `support_lookup_ticket` (MCP).
+4. Si `resolved=true`, responde con solucion historica referenciada y la sesion queda en `resuelto_por_referencia`.
+5. Si `resolved=false` o el lookup falla, la sesion pasa a `chat_generico`.
+6. En `chat_generico`, siguientes mensajes van directos a `codex exec` conversacional sin nuevo lookup MCP.
 
 ## Puertos
 
@@ -87,6 +89,11 @@ En UI deben verse:
 
 - `Backend conectado`
 - `Agente local: Conectado y libre`
+- Indicador de modo (`Triage inicial` / `Chat generico`) por `session_id`.
+
+Reset de triage:
+
+- Cambiar `Session ID` en sidebar inicia una sesion nueva y vuelve a habilitar el triage inicial.
 
 ## Endpoints utiles
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import os
 import uuid
 from dataclasses import dataclass
@@ -70,6 +71,24 @@ def _extract_bearer_token(authorization: str | None) -> str:
 
 def _sse(event_type: str, data: Dict[str, Any]) -> str:
     return f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _estimate_tokens(text: str) -> int:
+    content = str(text or "")
+    if not content.strip():
+        return 0
+    return max(1, math.ceil(len(content) / 4))
+
+
+def _build_token_usage(input_text: str, output_text: str) -> Dict[str, Any]:
+    input_tokens = _estimate_tokens(input_text)
+    output_tokens = _estimate_tokens(output_text)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "method": "chars_div_4_estimate",
+    }
 
 
 def _get_or_create_lock(user_id: str) -> asyncio.Lock:
@@ -230,10 +249,16 @@ async def submit_prompt(request: PromptRequest, authorization: str | None = Head
                     yield _sse("tool_trace", incoming)
                     continue
 
+                if event_type == "mode_update":
+                    yield _sse("mode_update", incoming)
+                    continue
+
                 if event_type == "final_answer":
                     if incoming.get("answer"):
                         accumulated = str(incoming["answer"])
                     references = incoming.get("references", []) or []
+                    if not isinstance(incoming.get("token_usage"), dict):
+                        incoming["token_usage"] = _build_token_usage(request.prompt, accumulated)
                     saw_final = True
                     yield _sse("final_answer", incoming)
                     break
@@ -252,6 +277,7 @@ async def submit_prompt(request: PromptRequest, authorization: str | None = Head
                         "request_id": request_id,
                         "answer": accumulated,
                         "references": references,
+                        "token_usage": _build_token_usage(request.prompt, accumulated),
                     },
                 )
 

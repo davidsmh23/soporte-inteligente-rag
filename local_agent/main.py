@@ -3,12 +3,17 @@ import json
 import os
 import shutil
 import tempfile
+import math
 from pathlib import Path
 from typing import Any
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
 import websockets
+try:
+    import tiktoken  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    tiktoken = None
 
 SESSION_GATEWAY_WS_URL = os.environ.get("SESSION_GATEWAY_WS_URL", "ws://localhost:9000/ws/agent")
 SESSION_USER_ID = os.environ.get("SESSION_USER_ID", "demo")
@@ -16,6 +21,39 @@ SESSION_USER_TOKEN = os.environ.get("SESSION_USER_TOKEN", "demo-token")
 CODEX_EXEC_TIMEOUT_SEC = int(os.environ.get("CODEX_EXEC_TIMEOUT_SEC", "300"))
 SUPPORT_MCP_URL = os.environ.get("SUPPORT_MCP_URL", "http://localhost:8100/mcp")
 SUPPORT_MCP_TOKEN = os.environ.get("SUPPORT_MCP_TOKEN", "")
+DIAGNOSTIC_VERBOSE = os.environ.get("DIAGNOSTIC_VERBOSE", "1").strip() not in {"0", "false", "False"}
+
+SESSION_MODE_TRIAGE = "triage_inicial"
+SESSION_MODE_CHAT = "chat_generico"
+SESSION_MODE_RESOLVED = "resuelto_por_referencia"
+
+
+def _count_tokens(text: str) -> tuple[int, str]:
+    content = str(text or "")
+    if not content.strip():
+        return 0, "empty"
+
+    if tiktoken is not None:
+        try:
+            encoder = tiktoken.get_encoding("cl100k_base")
+            return len(encoder.encode(content)), "tiktoken_cl100k_base"
+        except Exception:
+            pass
+
+    # Conservative fallback when tokenizer is not available.
+    return max(1, math.ceil(len(content) / 4)), "chars_div_4_estimate"
+
+
+def _build_token_usage(input_text: str, output_text: str) -> dict[str, Any]:
+    input_tokens, input_method = _count_tokens(input_text)
+    output_tokens, output_method = _count_tokens(output_text)
+    method = input_method if input_method == output_method else f"{input_method}+{output_method}"
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "method": method,
+    }
 
 
 def _load_env_value(key: str) -> str:
@@ -39,25 +77,77 @@ if not SUPPORT_MCP_TOKEN:
     SUPPORT_MCP_TOKEN = _load_env_value("MCP_BEARER_TOKEN")
 
 
-def _build_prompt(ticket_text: str, history: list[dict[str, Any]]) -> str:
-    history_text = ""
+def _build_chat_prompt(
+    ticket_text: str,
+    history: list[dict[str, Any]],
+) -> str:
+    user_history: list[str] = []
     if history:
-        lines = []
         for item in history[-10:]:
-            role = item.get("role", "user")
-            content = item.get("content", "")
-            lines.append(f"{role}: {content}")
-        history_text = "\n\nHistorial reciente:\n" + "\n".join(lines)
+            role = str(item.get("role", "")).strip().lower()
+            content = str(item.get("content", "")).strip()
+            if role == "user" and content:
+                user_history.append(content)
+    # Fallback conversational mode should be as close as possible to a direct Codex CLI prompt.
+    if len(user_history) <= 1:
+        return ticket_text.strip()
 
+    prior = user_history[:-1]
+    prior_text = "\n".join(f"- {line}" for line in prior)
     return (
-        "Eres un asistente de soporte tecnico.\n"
-        "Regla obligatoria: primero llama a la tool MCP support_lookup_ticket con el ticket actual.\n"
-        "Si resolved=true: responde con la solucion y lista referencias en formato archivo + fragmento.\n"
-        "Si resolved=false: continua en modo chatbot conversacional de soporte tecnico.\n"
-        "Responde en espanol.\n"
-        "Tu salida FINAL debe ser JSON valido que cumpla el esquema indicado por --output-schema.\n\n"
-        f"Ticket actual:\n{ticket_text}"
-        f"{history_text}"
+        "Contexto previo del usuario:\n"
+        f"{prior_text}\n\n"
+        "Mensaje actual:\n"
+        f"{ticket_text.strip()}"
+    )
+
+
+def _prompt_preview(prompt: str, max_len: int = 600) -> str:
+    compact = " ".join(prompt.split())
+    if len(compact) <= max_len:
+        return compact
+    return compact[:max_len].rstrip() + "..."
+
+
+async def _trace(websocket, request_id: str, detail: str, *, force: bool = False):
+    if not (DIAGNOSTIC_VERBOSE or force):
+        return
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "tool_trace",
+                "request_id": request_id,
+                "detail": detail,
+            }
+        )
+    )
+
+
+def _normalize_session_id(raw_session_id: Any) -> str:
+    session_id = str(raw_session_id or "").strip()
+    return session_id or "default-session"
+
+
+def _mode_label(mode: str) -> str:
+    labels = {
+        SESSION_MODE_TRIAGE: "Triage inicial",
+        SESSION_MODE_CHAT: "Chat generico",
+        SESSION_MODE_RESOLVED: "Resuelto por referencia",
+    }
+    return labels.get(mode, mode)
+
+
+async def _send_mode_update(websocket, request_id: str, session_id: str, mode: str):
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "mode_update",
+                "request_id": request_id,
+                "session_id": session_id,
+                "mode": mode,
+                "label": _mode_label(mode),
+            }
+        )
     )
 
 
@@ -187,7 +277,14 @@ def _extract_references(lookup_result: dict[str, Any]) -> list[dict[str, Any]]:
     return refs
 
 
-async def _run_codex_and_stream(websocket, request_id: str, prompt: str):
+async def _run_codex_and_stream(
+    websocket,
+    request_id: str,
+    prompt: str,
+    input_text_for_usage: str | None = None,
+):
+    await _trace(websocket, request_id, f"[prompt_preview] {_prompt_preview(prompt)}", force=True)
+
     codex_bin = shutil.which("codex")
     if not codex_bin:
         await websocket.send(
@@ -241,6 +338,12 @@ async def _run_codex_and_stream(websocket, request_id: str, prompt: str):
         output_path,
         prompt,
     ]
+    await _trace(
+        websocket,
+        request_id,
+        f"[codex_exec_cmd] {' '.join(cmd[:6])} ... -o {output_path}",
+        force=True,
+    )
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -248,6 +351,7 @@ async def _run_codex_and_stream(websocket, request_id: str, prompt: str):
     )
 
     accumulated = ""
+    streamed_events = 0
 
     try:
         while True:
@@ -267,6 +371,7 @@ async def _run_codex_and_stream(websocket, request_id: str, prompt: str):
             event_text = _extract_text(event)
             if event_text:
                 accumulated += event_text + "\n"
+                streamed_events += 1
                 await websocket.send(
                     json.dumps(
                         {
@@ -279,19 +384,25 @@ async def _run_codex_and_stream(websocket, request_id: str, prompt: str):
 
             lowered = raw.lower()
             if "support_lookup_ticket" in lowered or "mcp" in lowered:
-                await websocket.send(
-                    json.dumps(
-                        {
-                            "type": "tool_trace",
-                            "request_id": request_id,
-                            "detail": raw[:1500],
-                        }
-                    )
-                )
+                await _trace(websocket, request_id, raw[:1500], force=True)
 
         return_code = await process.wait()
+        await _trace(
+            websocket,
+            request_id,
+            f"[codex_exec_exit] code={return_code} streamed_events={streamed_events}",
+            force=True,
+        )
+
+        stderr_text = (await process.stderr.read()).decode("utf-8", errors="replace")
+        if stderr_text.strip():
+            await _trace(
+                websocket,
+                request_id,
+                f"[codex_stderr] {stderr_text[:1500]}",
+            )
+
         if return_code != 0:
-            stderr_text = (await process.stderr.read()).decode("utf-8", errors="replace")
             await websocket.send(
                 json.dumps(
                     {
@@ -311,8 +422,28 @@ async def _run_codex_and_stream(websocket, request_id: str, prompt: str):
                 if isinstance(parsed, dict):
                     final_answer = str(parsed.get("answer", final_answer)).strip()
                     references = parsed.get("references", []) or []
+                    await _trace(
+                        websocket,
+                        request_id,
+                        (
+                            f"[codex_output_json] has_answer={bool(parsed.get('answer'))} "
+                            f"resolved={parsed.get('resolved')} refs={len(references)}"
+                        ),
+                        force=True,
+                    )
+                    if final_answer:
+                        await _trace(
+                            websocket,
+                            request_id,
+                            f"[codex_answer_preview] {_prompt_preview(final_answer)}",
+                            force=True,
+                        )
+                else:
+                    await _trace(websocket, request_id, "[codex_output_json] parsed_non_dict", force=True)
         except Exception:
-            pass
+            await _trace(websocket, request_id, "[codex_output_json] read_or_parse_failed", force=True)
+
+        usage = _build_token_usage(input_text_for_usage or prompt, final_answer)
 
         await websocket.send(
             json.dumps(
@@ -321,6 +452,7 @@ async def _run_codex_and_stream(websocket, request_id: str, prompt: str):
                     "request_id": request_id,
                     "answer": final_answer,
                     "references": references,
+                    "token_usage": usage,
                 }
             )
         )
@@ -359,6 +491,13 @@ async def _run_once():
             request_id = message.get("request_id", "")
             prompt = message.get("prompt", "")
             history = message.get("history", [])
+            session_id = _normalize_session_id(message.get("session_id"))
+            await _send_mode_update(
+                websocket,
+                request_id=request_id,
+                session_id=session_id,
+                mode=SESSION_MODE_TRIAGE,
+            )
 
             lookup_result, lookup_error = await asyncio.to_thread(_support_lookup_ticket, prompt)
             if lookup_error:
@@ -384,20 +523,40 @@ async def _run_once():
                     )
                 )
                 if resolved:
+                    resolved_answer = _build_resolved_answer(lookup_result)
+                    usage = _build_token_usage(prompt, resolved_answer)
+                    await _send_mode_update(
+                        websocket,
+                        request_id=request_id,
+                        session_id=session_id,
+                        mode=SESSION_MODE_RESOLVED,
+                    )
                     await websocket.send(
                         json.dumps(
                             {
                                 "type": "final_answer",
                                 "request_id": request_id,
-                                "answer": _build_resolved_answer(lookup_result),
+                                "answer": resolved_answer,
                                 "references": _extract_references(lookup_result),
+                                "token_usage": usage,
                             }
                         )
                     )
                     continue
 
-            built_prompt = _build_prompt(prompt, history)
-            await _run_codex_and_stream(websocket, request_id=request_id, prompt=built_prompt)
+            await _send_mode_update(
+                websocket,
+                request_id=request_id,
+                session_id=session_id,
+                mode=SESSION_MODE_CHAT,
+            )
+            built_prompt = _build_chat_prompt(prompt, history)
+            await _run_codex_and_stream(
+                websocket,
+                request_id=request_id,
+                prompt=built_prompt,
+                input_text_for_usage=prompt,
+            )
 
 
 async def _ensure_mcp_server_config():

@@ -1,5 +1,6 @@
 import json
 import os
+import uuid
 from typing import Any, Dict, List
 
 import requests
@@ -16,13 +17,27 @@ st.sidebar.subheader("Sesion Codex Local")
 
 default_user_id = os.environ.get("DEFAULT_USER_ID", "demo")
 default_user_token = os.environ.get("DEFAULT_USER_TOKEN", "demo-token")
-default_session_id = "streamlit-session"
+if "active_session_id" not in st.session_state:
+    st.session_state.active_session_id = f"streamlit-{uuid.uuid4().hex[:8]}"
+if "chat_mode_by_session" not in st.session_state:
+    st.session_state.chat_mode_by_session = {}
 
 user_id = st.sidebar.text_input("User ID", value=default_user_id)
 user_token = st.sidebar.text_input("User Token", value=default_user_token, type="password")
-session_id = st.sidebar.text_input("Session ID", value=default_session_id)
+session_id = st.sidebar.text_input("Session ID", value=st.session_state.active_session_id)
+st.session_state.active_session_id = session_id.strip() or st.session_state.active_session_id
+session_id = st.session_state.active_session_id
 
 headers = {"Authorization": f"Bearer {user_token}"}
+mode_by_session: Dict[str, str] = st.session_state.chat_mode_by_session
+current_mode = mode_by_session.get(session_id, "triage_inicial")
+mode_label_map = {
+    "triage_inicial": "Triage inicial",
+    "chat_generico": "Chat generico",
+    "resuelto_por_referencia": "Resuelto por referencia",
+}
+mode_indicator = st.sidebar.empty()
+mode_indicator.info(f"Modo actual: {mode_label_map.get(current_mode, current_mode)}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Gestion de Conocimiento")
@@ -80,9 +95,22 @@ if "messages" not in st.session_state:
         }
     ]
 
+def _render_token_usage(token_usage: Dict[str, Any] | None):
+    if not isinstance(token_usage, dict):
+        return
+    input_tokens = int(token_usage.get("input_tokens", 0))
+    output_tokens = int(token_usage.get("output_tokens", 0))
+    total_tokens = int(token_usage.get("total_tokens", input_tokens + output_tokens))
+    method = str(token_usage.get("method", "unknown"))
+    st.caption(
+        f"Tokens (iteracion): entrada={input_tokens} salida={output_tokens} total={total_tokens} metodo={method}"
+    )
+
+
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        _render_token_usage(message.get("token_usage"))
         refs = message.get("references") or []
         if refs:
             with st.expander("Referencias"):
@@ -114,10 +142,12 @@ if user_input := st.chat_input("Escribe el ticket o tu mensaje aqui..."):
         placeholder = st.empty()
         trace_box = st.expander("Trazas MCP/Codex", expanded=False)
         refs_box = st.expander("Referencias", expanded=False)
+        token_box = st.expander("Uso de tokens", expanded=False)
 
         accumulated = ""
         traces: List[str] = []
         references: List[Dict[str, Any]] = []
+        token_usage: Dict[str, Any] | None = None
 
         payload = {
             "user_id": user_id,
@@ -161,11 +191,25 @@ if user_input := st.chat_input("Escribe el ticket o tu mensaje aqui..."):
                                 st.markdown("\n\n".join(traces[-20:]))
                         continue
 
+                    if event_type == "mode_update":
+                        mode = str(event.get("mode", "")).strip()
+                        if mode:
+                            mode_by_session[session_id] = mode
+                            label = mode_label_map.get(mode, mode)
+                            mode_indicator.info(f"Modo actual: {label}")
+                            traces.append(f"[mode_update] {label}")
+                            with trace_box:
+                                st.markdown("\n\n".join(traces[-20:]))
+                        continue
+
                     if event_type == "final_answer":
                         answer = event.get("answer", "")
                         if answer:
                             accumulated = answer
                             placeholder.markdown(accumulated)
+                        token_usage = event.get("token_usage")
+                        with token_box:
+                            _render_token_usage(token_usage)
                         references = event.get("references", []) or []
                         if references:
                             with refs_box:
@@ -193,6 +237,7 @@ if user_input := st.chat_input("Escribe el ticket o tu mensaje aqui..."):
                     "role": "assistant",
                     "content": accumulated,
                     "references": references,
+                    "token_usage": token_usage,
                 }
             )
         except Exception as e:
