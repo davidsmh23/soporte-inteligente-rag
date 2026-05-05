@@ -1,144 +1,177 @@
 # Migracion de Frontend a React
 
-## Estado actual del proyecto
+## Alcance
 
-El frontend actual esta en `frontend/app.py` (Streamlit) y usa estos endpoints:
+Migrar `frontend/app.py` (Streamlit) a una SPA React sin cambiar contratos del backend, `session-gateway` ni `local_agent`.
 
-- `GET /health` para estado backend.
-- `POST /api/v1/knowledge/index` para indexar el vault.
-- `POST /api/v1/chat/` para chat con triage y conversacion.
+## Estado real actual (codigo, no objetivo)
 
-El contrato actual de chat es:
+El frontend actual (`frontend/app.py`) no usa el chat HTTP directo de backend para conversar. El flujo real de chat pasa por `session-gateway` y SSE.
 
-- Request:
-  - `messages: [{ role: "user" | "assistant", content: string }]`
-- Response:
-  - `response: string`
-  - `route: "rag" | "free_chat" | "conversation"`
-  - `sources: string[]`
+### Servicios actuales relevantes
 
-## Objetivo de la migracion
+- `backend`:
+  - `GET /health`
+  - `POST /api/v1/knowledge/index`
+  - `POST /api/v1/chat/` (existe, pero no es el flujo principal de la UI actual)
+- `session-gateway`:
+  - `GET /api/v1/agents/{user_id}/status`
+  - `POST /api/v1/conversations`
+  - `GET /api/v1/conversations`
+  - `GET /api/v1/conversations/{conversation_ref}`
+  - `POST /api/v1/session/prompt` (stream SSE)
+- `local_agent`:
+  - Conecta por WebSocket a `session-gateway`
+  - Emite eventos `mode_update`, `conversation_bound`, `token_delta`, `final_answer`, `tool_trace`, `error`
 
-Sustituir Streamlit por una SPA React manteniendo el mismo flujo funcional:
+## Requisito de paridad funcional
 
-1. Sidebar con estado backend e indexacion de conocimiento.
-2. Chat con historial local.
-3. Envio del historial a `/api/v1/chat/`.
-4. Visualizacion de `sources` cuando existan.
+La version React debe replicar estas capacidades del Streamlit actual:
 
-No se cambia backend en esta fase.
+1. Configuracion de sesion: `user_id` y `user_token`.
+2. Estado backend y estado de agente local.
+3. Indexacion de conocimiento (`/api/v1/knowledge/index`).
+4. Lista de conversaciones persistidas.
+5. Conversacion activa con `conversation_id` y `codex_session_id`.
+6. Streaming incremental de respuesta (SSE).
+7. Render de referencias y uso de tokens por respuesta.
+8. Visualizacion de trazas (`tool_trace`) y cambios de modo (`mode_update`).
 
-## Arquitectura propuesta (React)
+## Contratos API a respetar
 
-- Stack recomendado:
+## Headers
+
+- Todas las llamadas a `session-gateway` requieren:
+  - `Authorization: Bearer <user_token>`
+
+## Conversaciones
+
+- `POST /api/v1/conversations`
+  - body: `{ "user_id": string, "title": string }`
+- `GET /api/v1/conversations?user_id=<user_id>`
+- `GET /api/v1/conversations/{conversation_ref}?user_id=<user_id>`
+
+## Prompt por streaming
+
+- `POST /api/v1/session/prompt`
+  - body:
+
+```json
+{
+  "user_id": "demo",
+  "conversation_id": "conv-xxxx",
+  "codex_session_id": "uuid-opcional",
+  "session_id": "conv-xxxx",
+  "prompt": "texto usuario",
+  "history": [
+    { "role": "assistant", "content": "..." },
+    { "role": "user", "content": "..." }
+  ]
+}
+```
+
+## Eventos SSE esperados
+
+- `prompt_submitted`
+- `token_delta`
+- `tool_trace`
+- `mode_update`
+- `conversation_bound`
+- `final_answer`
+- `error`
+
+El cliente React debe parsear `data: {...}` y usar el campo `type` del JSON para enrutar la logica.
+
+## Arquitectura recomendada en React
+
+- Stack:
   - React + TypeScript + Vite
-  - Fetch API nativa (sin libreria adicional)
-  - Estado local con `useState`
-- Estructura recomendada:
-  - `src/App.tsx`
-  - `src/components/Sidebar.tsx`
-  - `src/components/ChatWindow.tsx`
-  - `src/components/MessageList.tsx`
-  - `src/components/Composer.tsx`
-  - `src/api/client.ts`
+  - `fetch` + `ReadableStream` para SSE
+- Estructura:
+  - `src/app/App.tsx`
+  - `src/components/SessionSidebar.tsx`
+  - `src/components/ConversationList.tsx`
+  - `src/components/ChatTimeline.tsx`
+  - `src/components/TracePanel.tsx`
+  - `src/components/ReferencesPanel.tsx`
+  - `src/services/api.ts`
+  - `src/services/sse.ts`
   - `src/types/chat.ts`
 
-## Variables de entorno (frontend React)
+## Estado minimo en cliente
 
-Definir en `frontend/.env`:
-
-- `VITE_BACKEND_URL=http://localhost:8502`
-
-En Docker Compose, exponer esta variable al contenedor React.
-
-## Implementacion funcional
-
-### 1) Tipos y cliente API
-
-Crear tipos:
-
-- `ChatRole = "user" | "assistant"`
-- `ChatMessage = { role: ChatRole; content: string }`
-- `ChatResponse = { response: string; route: "rag" | "free_chat" | "conversation"; sources: string[] }`
-
-Crear funciones:
-
-- `healthCheck(): Promise<boolean>`
-- `indexKnowledge(): Promise<{ success: boolean; message: string }>`
-- `sendChat(messages: ChatMessage[]): Promise<ChatResponse>`
-
-### 2) Estado de UI
-
-Gestionar en `App`:
-
-- `messages: ChatMessage[]`
+- `userId: string`
+- `userToken: string`
+- `conversations: ConversationSummary[]`
+- `activeConversationId: string | null`
+- `activeCodexSessionId: string | null`
+- `messagesByConversation: Record<string, Message[]>`
+- `chatModeByConversation: Record<string, "triage_inicial" | "chat_generico" | "resuelto_por_referencia">`
+- `agentStatus: { connected: boolean; busy: boolean } | null`
 - `backendStatus: "ok" | "error" | "loading"`
-- `indexing: boolean`
-- `indexMessage: string`
 - `pending: boolean`
 
-Inicializar con mensaje de bienvenida:
+## Variables de entorno para React
 
-- Assistant: "Hola. Envia un ticket..."
+- `VITE_BACKEND_URL=http://localhost:8502`
+- `VITE_GATEWAY_URL=http://localhost:9000`
+- `VITE_DEFAULT_USER_ID=demo`
+- `VITE_DEFAULT_USER_TOKEN=demo-token`
 
-### 3) Envio de chat
+## Plan de migracion por fases
 
-Al enviar un mensaje:
+1. Crear `frontend-react` (Vite + TS) sin borrar `frontend` actual.
+2. Implementar capa `api.ts` (health, index, status, conversaciones).
+3. Implementar `POST /api/v1/session/prompt` con parser SSE.
+4. Replicar layout:
+   - Sidebar (sesion, health, index, estado agente)
+   - Columna de conversaciones
+   - Columna de chat
+5. Paridad de eventos:
+   - `token_delta`: stream incremental
+   - `mode_update`: actualizar indicador de modo
+   - `conversation_bound`: persistir `codex_session_id`
+   - `final_answer`: cerrar respuesta y referencias
+6. Smoke test con `tickets_prueba/*.txt`.
+7. Cambiar Compose a React cuando la paridad este validada.
 
-1. Agregar mensaje `user` al estado.
-2. Construir `apiMessages` filtrando la bienvenida inicial del assistant.
-3. Llamar `sendChat(apiMessages)`.
-4. Agregar mensaje `assistant` con `response`.
-5. Si `sources` existe y tiene elementos, mostrarlas en bloque de referencias.
+## Docker / Compose objetivo
 
-### 4) Sidebar
+Para el contenedor React:
 
-Incluir:
-
-- Estado backend en tiempo real (`healthCheck` al montar y boton manual refrescar).
-- Boton `Indexar Obsidian Vault`.
-- Resultado de indexacion (`success/warning/error`).
-
-### 5) UX minima equivalente
-
-- Input bloqueado mientras `pending=true`.
-- Scroll automatico al ultimo mensaje.
-- Mensajes de error de red visibles.
-
-## Plan de despliegue Docker
-
-1. Reemplazar `frontend` Streamlit por `frontend-react`.
-2. Nuevo `frontend-react/Dockerfile`:
-   - Build Vite
-   - Servir estaticos con `nginx:alpine`
-3. Actualizar `docker-compose.yml`:
-   - `build.context: ./frontend-react`
-   - `ports: "8501:80"`
-   - `environment: VITE_BACKEND_URL=http://backend:8000`
+- Build multi-stage:
+  - stage build con Node
+  - stage runtime con `nginx:alpine`
+- Puerto externo:
+  - `8501:80`
+- Variables:
+  - `VITE_BACKEND_URL=http://backend:8000`
+  - `VITE_GATEWAY_URL=http://session-gateway:9000`
 
 ## Criterios de aceptacion
 
-- `http://localhost:8501` abre frontend React.
-- `Backend conectado` visible si `/health` responde 200.
-- `Indexar Obsidian Vault` funciona y muestra resultado.
-- Primer ticket ejecuta triage (`rag` o `free_chat`) sin errores.
-- Mensajes posteriores usan ruta `conversation`.
-- Referencias (`sources`) se muestran cuando vienen en respuesta.
+- `http://localhost:8501` sirve la UI React.
+- Se puede crear y abrir conversaciones.
+- Se muestra `Codex Session ID` al hacer `conversation_bound`.
+- El primer mensaje refleja `mode_update` (triage o chat).
+- El streaming de `token_delta` se ve en vivo.
+- `final_answer` guarda mensaje, referencias y token usage.
+- Si el agente no esta conectado, se refleja error controlado desde gateway.
 
 ## Riesgos y mitigacion
 
-- CORS en backend:
-  - Si frontend y backend van en distinto origen, habilitar CORS en FastAPI.
-- Diferencias de estado vs Streamlit:
-  - Mantener exactamente el filtro de bienvenida antes de enviar historial.
-- Timeouts:
-  - Configurar timeout de chat en cliente (60s inicial).
+- Riesgo: implementar chat contra `/api/v1/chat/` y perder funcionalidad real.
+  - Mitigacion: usar exclusivamente `/api/v1/session/prompt` para la conversacion de UI.
+- Riesgo: manejo incorrecto de `conversation_bound`.
+  - Mitigacion: actualizar `activeCodexSessionId` y refrescar lista de conversaciones.
+- Riesgo: diferencias de estado respecto a Streamlit.
+  - Mitigacion: mantener `messagesByConversation` y `chatModeByConversation` como fuentes unicas de verdad.
 
-## Checklist de migracion
+## Checklist final
 
-- Crear proyecto React + TypeScript.
-- Implementar cliente API y tipos.
-- Implementar sidebar (health + index).
-- Implementar chat (historial, envio, errores, referencias).
-- Actualizar Docker y Compose.
-- Prueba manual con `tickets_prueba`.
+- React replica flujo `session-gateway` + SSE.
+- Autenticacion bearer aplicada a endpoints del gateway.
+- Conversaciones persistidas visibles y navegables.
+- Indexacion de conocimiento funcional.
+- Manejo de errores (HTTP y eventos `error`) visible en UI.
+- Compose preparado para alternar de Streamlit a React.
