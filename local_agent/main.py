@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 from urllib import error as urllib_error
+from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
 import websockets
@@ -27,6 +28,8 @@ SUPPORT_MCP_TIMEOUT_SEC = int(os.environ.get("SUPPORT_MCP_TIMEOUT_SEC", "45"))
 SUPPORT_LOOKUP_K = int(os.environ.get("SUPPORT_LOOKUP_K", "3"))
 _raw_threshold = os.environ.get("SUPPORT_LOOKUP_THRESHOLD", "").strip()
 SUPPORT_LOOKUP_THRESHOLD = float(_raw_threshold) if _raw_threshold else None
+CODEX_EXEC_CWD = os.environ.get("CODEX_EXEC_CWD", "").strip()
+DISABLE_LOCAL_INSPECTION = os.environ.get("DISABLE_LOCAL_INSPECTION", "1").strip().lower() not in {"0", "false", "no"}
 
 SESSION_MODE_CHAT = "chat_generico"
 SESSION_MODE_TRIAGE = "triage_inicial"
@@ -43,6 +46,56 @@ MODE_LABELS = {
     SESSION_MODE_CHAT: "Chat generico",
     SESSION_MODE_RESOLVED: "Resuelto por referencia",
 }
+LOCAL_INSPECTION_GUARD = (
+    "Reglas obligatorias de esta sesion:\n"
+    "- No uses herramientas locales ni shell.\n"
+    "- No inspecciones archivos del entorno ni del repositorio.\n"
+    "- No afirmes que revisaste codigo, docker-compose, logs o carpetas locales.\n"
+    "- Responde solo con la informacion escrita por el usuario y tus conocimientos.\n"
+    "- Si faltan datos, pide al usuario comandos/logs concretos para continuar.\n\n"
+    "Consulta del usuario:\n"
+)
+
+
+def _is_local_host(hostname: str | None) -> bool:
+    return str(hostname or "").strip().lower() in {"localhost", "127.0.0.1", "::1"}
+
+
+def _build_support_mcp_urls() -> list[str]:
+    configured = SUPPORT_MCP_URL.strip()
+    urls: list[str] = []
+    if configured:
+        urls.append(configured)
+
+    ws = urllib_parse.urlparse(SESSION_GATEWAY_WS_URL.strip())
+    ws_host = ws.hostname
+    if not ws_host:
+        return urls
+
+    configured_host = None
+    configured_port = 8100
+    configured_path = "/mcp"
+    if configured:
+        parsed = urllib_parse.urlparse(configured)
+        configured_host = parsed.hostname
+        configured_port = parsed.port or configured_port
+        if parsed.path:
+            configured_path = parsed.path
+
+    should_add_ws_fallback = not configured or (
+        _is_local_host(configured_host) and not _is_local_host(ws_host)
+    )
+    if not should_add_ws_fallback:
+        return urls
+
+    fallback_scheme = "https" if ws.scheme == "wss" else "http"
+    fallback_netloc = f"{ws_host}:{configured_port}"
+    fallback_url = urllib_parse.urlunparse(
+        (fallback_scheme, fallback_netloc, configured_path, "", "", "")
+    )
+    if fallback_url not in urls:
+        urls.append(fallback_url)
+    return urls
 
 
 async def _send_json(websocket, payload: dict[str, Any]) -> None:
@@ -263,6 +316,24 @@ def _resolve_codex_bin() -> str | None:
     return None
 
 
+def _resolve_codex_exec_cwd() -> Path:
+    if CODEX_EXEC_CWD:
+        root = Path(CODEX_EXEC_CWD).expanduser()
+    else:
+        root = Path(tempfile.gettempdir()) / "support-agent-codex-workdir"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(f"No se pudo preparar CODEX_EXEC_CWD '{root}': {exc}") from exc
+    return root
+
+
+def _build_effective_prompt(prompt_text: str) -> str:
+    if not DISABLE_LOCAL_INSPECTION:
+        return prompt_text
+    return f"{LOCAL_INSPECTION_GUARD}{prompt_text}"
+
+
 def _load_value_from_root_env(key: str) -> str | None:
     env_path = Path(__file__).resolve().parent.parent / ".env"
     try:
@@ -279,7 +350,7 @@ def _load_value_from_root_env(key: str) -> str | None:
     return None
 
 
-def _build_codex_cmd(codex_bin: str, output_path: str, known_session: str | None) -> list[str]:
+def _build_codex_cmd(codex_bin: str, output_path: str, known_session: str | None, exec_cwd: Path) -> list[str]:
     # Hard security boundary: no file edits and no approval escalation.
     safe_exec_flags = [
         "-c",
@@ -287,10 +358,19 @@ def _build_codex_cmd(codex_bin: str, output_path: str, known_session: str | None
         "-c",
         'approval_policy="never"',
     ]
+    base = [
+        codex_bin,
+        "-C",
+        str(exec_cwd),
+        "--disable",
+        "shell_tool",
+        "exec",
+        "--skip-git-repo-check",
+        "--ignore-rules",
+    ]
     if known_session:
         return [
-            codex_bin,
-            "exec",
+            *base,
             "resume",
             *safe_exec_flags,
             "--json",
@@ -300,8 +380,7 @@ def _build_codex_cmd(codex_bin: str, output_path: str, known_session: str | None
             "-",
         ]
     return [
-        codex_bin,
-        "exec",
+        *base,
         *safe_exec_flags,
         "--json",
         "-o",
@@ -372,9 +451,10 @@ def _resolve_support_mcp_token() -> str:
     return (fallback or "").strip()
 
 
-def _sync_lookup_ticket(ticket_text: str) -> dict[str, Any]:
+def _sync_lookup_ticket(ticket_text: str) -> tuple[dict[str, Any], str]:
     token = _resolve_support_mcp_token()
-    if not SUPPORT_MCP_URL:
+    urls = _build_support_mcp_urls()
+    if not urls:
         raise RuntimeError("SUPPORT_MCP_URL vacia.")
     if not token:
         raise RuntimeError("SUPPORT_MCP_TOKEN/MCP_BEARER_TOKEN no disponible.")
@@ -396,44 +476,85 @@ def _sync_lookup_ticket(ticket_text: str) -> dict[str, Any]:
         },
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib_request.Request(
-        url=SUPPORT_MCP_URL,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        },
-    )
-    try:
-        with urllib_request.urlopen(req, timeout=SUPPORT_MCP_TIMEOUT_SEC) as resp:
-            response_text = resp.read().decode("utf-8", errors="replace")
-    except urllib_error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"HTTP {exc.code}: {error_body[:600]}") from exc
-    except urllib_error.URLError as exc:
-        raise RuntimeError(f"conexion fallida: {exc}") from exc
+    failures: list[str] = []
+    for url in urls:
+        req = urllib_request.Request(
+            url=url,
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {token}",
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=SUPPORT_MCP_TIMEOUT_SEC) as resp:
+                response_text = resp.read().decode("utf-8", errors="replace")
+        except urllib_error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            failures.append(f"{url} -> HTTP {exc.code}: {error_body[:200]}")
+            continue
+        except urllib_error.URLError as exc:
+            failures.append(f"{url} -> conexion fallida: {exc}")
+            continue
 
-    rpc = json.loads(response_text)
-    if not isinstance(rpc, dict):
-        raise RuntimeError("respuesta MCP invalida (no-objeto).")
-    if isinstance(rpc.get("error"), dict):
-        rpc_error = rpc["error"]
-        raise RuntimeError(f"RPC {rpc_error.get('code')}: {rpc_error.get('message')}")
+        try:
+            rpc = json.loads(response_text)
+        except json.JSONDecodeError as exc:
+            failures.append(f"{url} -> respuesta no JSON: {exc}")
+            continue
+        if not isinstance(rpc, dict):
+            failures.append(f"{url} -> respuesta MCP invalida (no-objeto).")
+            continue
+        if isinstance(rpc.get("error"), dict):
+            rpc_error = rpc["error"]
+            failures.append(f"{url} -> RPC {rpc_error.get('code')}: {rpc_error.get('message')}")
+            continue
 
-    result = rpc.get("result", {})
-    structured = result.get("structuredContent") if isinstance(result, dict) else None
-    if isinstance(structured, dict):
-        return structured
+        result = rpc.get("result", {})
+        structured = result.get("structuredContent") if isinstance(result, dict) else None
+        if isinstance(structured, dict):
+            return structured, url
 
-    content = result.get("content") if isinstance(result, dict) else None
-    if isinstance(content, list) and content:
-        first = content[0]
-        if isinstance(first, dict) and isinstance(first.get("text"), str):
-            parsed = json.loads(first["text"])
-            if isinstance(parsed, dict):
-                return parsed
-    raise RuntimeError("respuesta MCP sin structuredContent util.")
+        content = result.get("content") if isinstance(result, dict) else None
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and isinstance(first.get("text"), str):
+                try:
+                    parsed = json.loads(first["text"])
+                except json.JSONDecodeError as exc:
+                    failures.append(f"{url} -> content[0].text invalido: {exc}")
+                    continue
+                if isinstance(parsed, dict):
+                    return parsed, url
+        failures.append(f"{url} -> respuesta MCP sin structuredContent util.")
+
+    detail = " | ".join(failures[-3:]) if failures else "sin detalle"
+    raise RuntimeError(f"lookup sin exito en {len(urls)} endpoint(s): {detail}")
+
+
+async def _drain_stderr(stream, max_chars: int = 20000) -> str:
+    chunks: list[str] = []
+    total = 0
+    while True:
+        block = await stream.read(4096)
+        if not block:
+            break
+        text = block.decode("utf-8", errors="replace")
+        chunks.append(text)
+        total += len(text)
+        if total > max_chars:
+            overflow = total - max_chars
+            while chunks and overflow > 0:
+                head = chunks[0]
+                if len(head) <= overflow:
+                    overflow -= len(head)
+                    chunks.pop(0)
+                else:
+                    chunks[0] = head[overflow:]
+                    overflow = 0
+            total = max_chars
+    return "".join(chunks)
 
 
 def _build_triage_references(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -503,16 +624,23 @@ async def _run_codex_and_stream(
     if not prompt_text:
         await _send_error(websocket, request_id, "Prompt vacio.")
         return
+    effective_prompt = _build_effective_prompt(prompt_text)
 
     known_session = _normalize_codex_session_id(codex_session_id)
+    try:
+        exec_cwd = _resolve_codex_exec_cwd()
+    except RuntimeError as exc:
+        await _send_error(websocket, request_id, str(exc))
+        return
     output_path = None
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as output_file:
         output_path = output_file.name
 
     before_sessions = _read_recent_session_ids() if not known_session else []
-    cmd = _build_codex_cmd(codex_bin, output_path, known_session)
+    cmd = _build_codex_cmd(codex_bin, output_path, known_session, exec_cwd)
 
     await _trace(websocket, request_id, f"[prompt_preview] {_prompt_preview(prompt_text)}", force=True)
+    await _trace(websocket, request_id, f"[exec_cwd] {exec_cwd}", force=True)
     await _trace(websocket, request_id, f"[codex_cmd] {' '.join(cmd[:7])} ...", force=True)
 
     process = await asyncio.create_subprocess_exec(
@@ -522,13 +650,14 @@ async def _run_codex_and_stream(
         stderr=asyncio.subprocess.PIPE,
     )
     if process.stdin:
-        process.stdin.write(prompt_text.encode("utf-8"))
+        process.stdin.write(effective_prompt.encode("utf-8"))
         await process.stdin.drain()
         process.stdin.close()
 
     accumulated = ""
     streamed_events = 0
     detected_thread_id = known_session
+    stderr_task = asyncio.create_task(_drain_stderr(process.stderr)) if process.stderr else None
 
     try:
         while True:
@@ -571,7 +700,7 @@ async def _run_codex_and_stream(
                 )
 
         return_code = await process.wait()
-        stderr_text = (await process.stderr.read()).decode("utf-8", errors="replace")
+        stderr_text = await stderr_task if stderr_task else ""
         await _trace(
             websocket,
             request_id,
@@ -613,6 +742,8 @@ async def _run_codex_and_stream(
                     final_answer = output_text
         except OSError:
             pass
+        if not final_answer:
+            final_answer = "No se genero contenido en esta ejecucion de Codex."
 
         usage = _build_token_usage(prompt_text, final_answer)
         await _send_final_answer(
@@ -625,8 +756,15 @@ async def _run_codex_and_stream(
         )
     except asyncio.TimeoutError:
         process.kill()
+        if stderr_task:
+            try:
+                await asyncio.wait_for(stderr_task, timeout=2)
+            except Exception:
+                stderr_task.cancel()
         await _send_error(websocket, request_id, "Timeout en ejecucion de codex exec.")
     finally:
+        if stderr_task and not stderr_task.done():
+            stderr_task.cancel()
         if output_path:
             try:
                 os.remove(output_path)
@@ -643,9 +781,9 @@ async def _run_initial_triage(
     await _trace(
         websocket,
         request_id,
-        f"[triage_lookup] url={SUPPORT_MCP_URL} k={SUPPORT_LOOKUP_K} threshold={SUPPORT_LOOKUP_THRESHOLD}",
+        f"[triage_lookup] urls={_build_support_mcp_urls()} k={SUPPORT_LOOKUP_K} threshold={SUPPORT_LOOKUP_THRESHOLD}",
     )
-    lookup = await asyncio.to_thread(_sync_lookup_ticket, prompt_text)
+    lookup, used_url = await asyncio.to_thread(_sync_lookup_ticket, prompt_text)
     resolved = bool(lookup.get("resolved"))
     matches_raw = lookup.get("matches")
     matches = matches_raw if isinstance(matches_raw, list) else []
@@ -656,7 +794,7 @@ async def _run_initial_triage(
         websocket,
         request_id,
         (
-            f"[triage_lookup] resolved={resolved} "
+            f"[triage_lookup] url={used_url} resolved={resolved} "
             f"route_hint={lookup.get('route_hint')} "
             f"top_ticket={top_ref.get('ticket_id') if isinstance(top_ref, dict) else None}"
         ),

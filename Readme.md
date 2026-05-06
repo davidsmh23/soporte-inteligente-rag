@@ -35,6 +35,7 @@ Flujo:
 4. Si `resolved=true`, responde con solucion historica referenciada y la sesion queda en `resuelto_por_referencia`.
 5. Si `resolved=false` o el lookup falla, la sesion pasa a `chat_generico`.
 6. En `chat_generico`, siguientes mensajes van directos a `codex exec` conversacional sin nuevo lookup MCP.
+   - Se ejecuta en `cwd` aislado, con `shell_tool` deshabilitado y sin inspeccion local del repo.
 
 ## Puertos
 
@@ -74,6 +75,8 @@ Cliente local (`local_agent`):
 - `SESSION_USER_TOKEN`
 - `SUPPORT_MCP_URL` (ej: `http://185.57.173.233:8100/mcp`)
 - `SUPPORT_MCP_TOKEN`
+- `DISABLE_LOCAL_INSPECTION` (default `1`; impide diagnostico mirando archivos locales)
+- `CODEX_EXEC_CWD` (opcional; directorio aislado para `codex exec`)
 
 Nota: si `SUPPORT_MCP_TOKEN` no esta definido, `local_agent` intenta cargar `MCP_BEARER_TOKEN` desde `../.env`.
 

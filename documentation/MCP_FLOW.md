@@ -62,4 +62,5 @@ python main.py
    - primero usa `support_lookup_ticket`
    - si `resolved=true`: responde con solucion + referencias
    - si `resolved=false`: fallback temporal a chat conversacional
+   - en chat conversacional corre con `shell_tool` deshabilitado, `cwd` aislado y sin inspeccion del repo local
 5. Streamlit muestra respuesta incremental y bloque de referencias.
