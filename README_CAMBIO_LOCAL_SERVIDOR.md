@@ -3,7 +3,7 @@
 Este documento explica como usar la misma base de codigo en dos modos:
 
 - Modo local/original (`localhost`).
-- Modo servidor remoto (por ejemplo `192.168.1.65`).
+- Modo servidor remoto (URL fija `185.57.173.233`).
 
 No hace falta cambiar codigo para alternar entre modos. Solo variables de entorno al lanzar `local_agent`.
 
@@ -51,10 +51,10 @@ Usa este modo cuando el `local_agent` corre en otra maquina distinta al servidor
 cd "C:\Users\DavidSanMartinHurtad\OneDrive - Habber Tec\Documentos\GitHub\soporte-inteligente-rag\local_agent"
 .venv\Scripts\Activate.ps1
 
-$env:SESSION_GATEWAY_WS_URL="ws://192.168.1.65:9000/ws/agent"
+$env:SESSION_GATEWAY_WS_URL="ws://185.57.173.233:9000/ws/agent"
 $env:SESSION_USER_ID="demo"
 $env:SESSION_USER_TOKEN="Qm7xR4nP9vK2sL8dT5yH3cW1fJ6bN0zA"
-$env:SUPPORT_MCP_URL="http://192.168.1.65:8100/mcp"
+$env:SUPPORT_MCP_URL="http://185.57.173.233:8100/mcp"
 $env:SUPPORT_MCP_TOKEN="3kV9pL2xT7mQ4dR8nY1hC6sF0bW5jZ"
 
 python main.py
@@ -62,7 +62,7 @@ python main.py
 
 UI:
 
-- `http://192.168.1.65:8501`
+- `http://185.57.173.233:8501`
 
 ## 4) Volver a la version inicial rapidamente
 
@@ -83,8 +83,8 @@ $env:SUPPORT_MCP_URL="http://localhost:8100/mcp"
 Desde el cliente:
 
 ```powershell
-Test-NetConnection 192.168.1.65 -Port 9000
-Test-NetConnection 192.168.1.65 -Port 8100
+Test-NetConnection 185.57.173.233 -Port 9000
+Test-NetConnection 185.57.173.233 -Port 8100
 ```
 
 Desde el servidor:

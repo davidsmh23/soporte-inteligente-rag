@@ -113,8 +113,8 @@ El cliente React debe parsear `data: {...}` y usar el campo `type` del JSON para
 
 ## Variables de entorno para React
 
-- `VITE_BACKEND_URL=http://localhost:8502`
-- `VITE_GATEWAY_URL=http://localhost:9000`
+- `VITE_BACKEND_URL=http://185.57.173.233:8502`
+- `VITE_GATEWAY_URL=http://185.57.173.233:9000`
 - `VITE_DEFAULT_USER_ID=demo`
 - `VITE_DEFAULT_USER_TOKEN=demo-token`
 
@@ -150,7 +150,7 @@ Para el contenedor React:
 
 ## Criterios de aceptacion
 
-- `http://localhost:8501` sirve la UI React.
+- `http://185.57.173.233:8501` sirve la UI React.
 - Se puede crear y abrir conversaciones.
 - Se muestra `Codex Session ID` al hacer `conversation_bound`.
 - El primer mensaje refleja `mode_update` (triage o chat).

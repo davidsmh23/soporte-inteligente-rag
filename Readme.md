@@ -55,7 +55,7 @@ docker compose up -d --build
 
 Abrir:
 
-- `http://localhost:8501`
+- `http://185.57.173.233:8501`
 
 ## Variables de entorno clave
 
@@ -69,10 +69,10 @@ Servidor (`.env`):
 
 Cliente local (`local_agent`):
 
-- `SESSION_GATEWAY_WS_URL` (ej: `ws://localhost:9000/ws/agent`)
+- `SESSION_GATEWAY_WS_URL` (ej: `ws://185.57.173.233:9000/ws/agent`)
 - `SESSION_USER_ID`
 - `SESSION_USER_TOKEN`
-- `SUPPORT_MCP_URL` (ej: `http://localhost:8100/mcp`)
+- `SUPPORT_MCP_URL` (ej: `http://185.57.173.233:8100/mcp`)
 - `SUPPORT_MCP_TOKEN`
 
 Nota: si `SUPPORT_MCP_TOKEN` no esta definido, `local_agent` intenta cargar `MCP_BEARER_TOKEN` desde `../.env`.
@@ -80,9 +80,9 @@ Nota: si `SUPPORT_MCP_TOKEN` no esta definido, `local_agent` intenta cargar `MCP
 ## Verificacion rapida
 
 ```bash
-curl http://localhost:8502/health
-curl http://localhost:8100/health
-curl http://localhost:9000/health
+curl http://185.57.173.233:8502/health
+curl http://185.57.173.233:8100/health
+curl http://185.57.173.233:9000/health
 ```
 
 En UI deben verse:
@@ -131,5 +131,5 @@ docker compose logs --tail 200 backend
 - Validar estado:
 
 ```bash
-curl -H "Authorization: Bearer <token>" http://localhost:9000/api/v1/agents/demo/status
+curl -H "Authorization: Bearer <token>" http://185.57.173.233:9000/api/v1/agents/demo/status
 ```

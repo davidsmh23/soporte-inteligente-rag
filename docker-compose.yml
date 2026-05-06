@@ -3,7 +3,7 @@ services:
   chromadb:
     image: chromadb/chroma:0.4.24
     ports:
-      - "8033:8000"
+      - "${SERVER_HOST:-185.57.173.233}:8033:8000"
     volumes:
       - chroma-data:/chroma/chroma
     environment:
@@ -15,7 +15,7 @@ services:
     build:
       context: ./backend
     ports:
-      - "8502:8000"
+      - "${SERVER_HOST:-185.57.173.233}:8502:8000"
     volumes:
       - ./obsidian_vault:/app/obsidian_vault:ro
     environment:
@@ -32,7 +32,7 @@ services:
     build:
       context: ./mcp_server
     ports:
-      - "8100:8100"
+      - "${SERVER_HOST:-185.57.173.233}:8100:8100"
     environment:
       - BACKEND_URL=http://backend:8000
       - MCP_BEARER_TOKEN=${MCP_BEARER_TOKEN}
@@ -45,7 +45,7 @@ services:
     build:
       context: ./session_gateway
     ports:
-      - "9000:9000"
+      - "${SERVER_HOST:-185.57.173.233}:9000:9000"
     environment:
       - SESSION_USER_TOKENS=${SESSION_USER_TOKENS}
       - SESSION_SHARED_TOKEN=${SESSION_SHARED_TOKEN}
@@ -56,7 +56,7 @@ services:
     build:
       context: ./frontend
     ports:
-      - "8501:8501"
+      - "${SERVER_HOST:-185.57.173.233}:8501:8501"
     environment:
       - BACKEND_URL=http://backend:8000
       - GATEWAY_URL=http://session-gateway:9000

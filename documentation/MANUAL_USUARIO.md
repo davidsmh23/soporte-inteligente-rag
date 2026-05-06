@@ -1,4 +1,4 @@
-# Manual de Usuario: Asistente de Soporte + Codex CLI
+﻿# Manual de Usuario: Asistente de Soporte + Codex CLI
 
 ## 1. Objetivo
 
@@ -20,12 +20,12 @@ Este manual explica como:
 
 ## 3. Arquitectura y puertos
 
-- Frontend Streamlit: `http://localhost:8501`
-- Backend API: `http://localhost:8502`
-- Swagger backend: `http://localhost:8502/docs`
-- MCP server: `http://localhost:8100`
-- Session gateway: `http://localhost:9000`
-- ChromaDB: `http://localhost:8033`
+- Frontend Streamlit: `http://185.57.173.233:8501`
+- Backend API: `http://185.57.173.233:8502`
+- Swagger backend: `http://185.57.173.233:8502/docs`
+- MCP server: `http://185.57.173.233:8100`
+- Session gateway: `http://185.57.173.233:9000`
+- ChromaDB: `http://185.57.173.233:8033`
 
 ## 4. Requisitos
 
@@ -67,9 +67,9 @@ docker compose up -d --build
 4. Verificar salud:
 
 ```bash
-curl http://localhost:8502/health
-curl http://localhost:8100/health
-curl http://localhost:9000/health
+curl http://185.57.173.233:8502/health
+curl http://185.57.173.233:8100/health
+curl http://185.57.173.233:9000/health
 ```
 
 ## 6. Conectar el agente local Codex
@@ -104,20 +104,20 @@ Variables recomendadas (anonimizadas):
 Linux/macOS:
 
 ```bash
-export SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
+export SESSION_GATEWAY_WS_URL="ws://185.57.173.233:9000/ws/agent"
 export SESSION_USER_ID="<USER_ID>"
 export SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
-export SUPPORT_MCP_URL="http://localhost:8100/mcp"
+export SUPPORT_MCP_URL="http://185.57.173.233:8100/mcp"
 export SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
 ```
 
 PowerShell:
 
 ```powershell
-$env:SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
+$env:SESSION_GATEWAY_WS_URL="ws://185.57.173.233:9000/ws/agent"
 $env:SESSION_USER_ID="<USER_ID>"
 $env:SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
-$env:SUPPORT_MCP_URL="http://localhost:8100/mcp"
+$env:SUPPORT_MCP_URL="http://185.57.173.233:8100/mcp"
 $env:SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
 ```
 
@@ -137,10 +137,10 @@ Linux/macOS:
 cd "/ruta/al/repositorio/soporte-inteligente-rag/local_agent"
 source .venv/bin/activate
 
-export SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
+export SESSION_GATEWAY_WS_URL="ws://185.57.173.233:9000/ws/agent"
 export SESSION_USER_ID="<USER_ID>"
 export SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
-export SUPPORT_MCP_URL="http://localhost:8100/mcp"
+export SUPPORT_MCP_URL="http://185.57.173.233:8100/mcp"
 export SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
 
 python main.py
@@ -152,10 +152,10 @@ Windows (PowerShell):
 cd "C:\ruta\al\repositorio\soporte-inteligente-rag\local_agent"
 .venv\Scripts\Activate.ps1
 
-$env:SESSION_GATEWAY_WS_URL="ws://localhost:9000/ws/agent"
+$env:SESSION_GATEWAY_WS_URL="ws://185.57.173.233:9000/ws/agent"
 $env:SESSION_USER_ID="<USER_ID>"
 $env:SESSION_USER_TOKEN="<SESSION_USER_TOKEN>"
-$env:SUPPORT_MCP_URL="http://localhost:8100/mcp"
+$env:SUPPORT_MCP_URL="http://185.57.173.233:8100/mcp"
 $env:SUPPORT_MCP_TOKEN="<SUPPORT_MCP_TOKEN>"
 
 python main.py
@@ -163,7 +163,7 @@ python main.py
 
 ## 7. Uso diario en Streamlit
 
-1. Abrir `http://localhost:8501`.
+1. Abrir `http://185.57.173.233:8501`.
 2. Completar sidebar:
    - `User ID`
    - `User Token`
@@ -210,7 +210,7 @@ docker compose logs --tail 200 backend
 - Probar estado:
 
 ```bash
-curl -H "Authorization: Bearer <token>" http://localhost:9000/api/v1/agents/demo/status
+curl -H "Authorization: Bearer <token>" http://185.57.173.233:9000/api/v1/agents/demo/status
 ```
 
 ### No salen referencias aunque hay match
@@ -225,3 +225,4 @@ curl -H "Authorization: Bearer <token>" http://localhost:9000/api/v1/agents/demo
 - Rotar `MCP_BEARER_TOKEN` periodicamente.
 - Usar reverse proxy HTTPS en produccion.
 - Monitorizar logs de `frontend`, `backend`, `mcp-server`, `session-gateway`, `local_agent`.
+

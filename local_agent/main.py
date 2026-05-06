@@ -17,12 +17,12 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     tiktoken = None
 
-SESSION_GATEWAY_WS_URL = os.environ.get("SESSION_GATEWAY_WS_URL", "ws://localhost:9000/ws/agent")
+SESSION_GATEWAY_WS_URL = os.environ.get("SESSION_GATEWAY_WS_URL", "ws://185.57.173.233:9000/ws/agent")
 SESSION_USER_ID = os.environ.get("SESSION_USER_ID", "demo")
 SESSION_USER_TOKEN = os.environ.get("SESSION_USER_TOKEN", "demo-token")
 CODEX_EXEC_TIMEOUT_SEC = int(os.environ.get("CODEX_EXEC_TIMEOUT_SEC", "300"))
 DIAGNOSTIC_VERBOSE = os.environ.get("DIAGNOSTIC_VERBOSE", "1").strip() not in {"0", "false", "False"}
-SUPPORT_MCP_URL = os.environ.get("SUPPORT_MCP_URL", "http://localhost:8100/mcp").strip()
+SUPPORT_MCP_URL = os.environ.get("SUPPORT_MCP_URL", "http://185.57.173.233:8100/mcp").strip()
 SUPPORT_MCP_TIMEOUT_SEC = int(os.environ.get("SUPPORT_MCP_TIMEOUT_SEC", "45"))
 SUPPORT_LOOKUP_K = int(os.environ.get("SUPPORT_LOOKUP_K", "3"))
 _raw_threshold = os.environ.get("SUPPORT_LOOKUP_THRESHOLD", "").strip()
