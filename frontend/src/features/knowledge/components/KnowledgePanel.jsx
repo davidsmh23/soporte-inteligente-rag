@@ -3,11 +3,29 @@ import { useState } from "react";
 import { StatusBadge } from "../../../components/StatusBadge";
 import { indexKnowledgeBase } from "../../../services/api";
 
+function getAgentLabel(agentStatus) {
+  if (!agentStatus) {
+    return { tone: "warning", label: "Sin estado" };
+  }
+
+  if (!agentStatus.connected) {
+    return { tone: "warning", label: "No conectado" };
+  }
+
+  return {
+    tone: agentStatus.busy ? "neutral" : "success",
+    label: agentStatus.busy ? "Ocupado" : "Disponible",
+  };
+}
+
 export function KnowledgePanel({
   backendStatus,
+  agentStatus,
   healthError,
+  uiError,
   isCheckingHealth,
   onRefreshHealth,
+  onRefreshAgent,
 }) {
   const [indexState, setIndexState] = useState({
     status: "idle",
@@ -30,6 +48,8 @@ export function KnowledgePanel({
       });
     }
   };
+
+  const agentBadge = getAgentLabel(agentStatus);
 
   return (
     <section className="knowledge-toolbar">
@@ -54,7 +74,18 @@ export function KnowledgePanel({
           className="secondary-button compact-button"
           onClick={onRefreshHealth}
         >
-          Reintentar conexion
+          Reintentar backend
+        </button>
+      </div>
+
+      <div className="knowledge-toolbar-section">
+        <span className="toolbar-label">Agente</span>
+        <StatusBadge status={agentBadge.tone}>{agentBadge.label}</StatusBadge>
+        <button
+          className="secondary-button compact-button"
+          onClick={onRefreshAgent}
+        >
+          Consultar gateway
         </button>
       </div>
 
@@ -91,6 +122,7 @@ export function KnowledgePanel({
       </div>
 
       {healthError ? <p className="toolbar-note error">{healthError}</p> : null}
+      {uiError ? <p className="toolbar-note error">{uiError}</p> : null}
       {indexState.message ? (
         <p
           className={`toolbar-note ${
