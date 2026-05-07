@@ -32,90 +32,74 @@ export function KnowledgePanel({
   };
 
   return (
-    <section className="knowledge-panel">
-      <div className="panel-header">
-        <p className="eyebrow">Base de conocimiento</p>
-        <h2>Obsidian Vault</h2>
-      </div>
-
-      <div className="panel-block">
-        <div className="status-row">
-          <span>Estado del backend</span>
-          <StatusBadge
-            status={
-              backendStatus === "online"
-                ? "success"
-                : backendStatus === "offline"
-                  ? "error"
-                  : "neutral"
-            }
-          >
-            {isCheckingHealth
-              ? "Verificando"
-              : backendStatus === "online"
-                ? "Disponible"
-                : "Sin conexion"}
-          </StatusBadge>
-        </div>
-
-        <button className="secondary-button" onClick={onRefreshHealth}>
+    <section className="knowledge-toolbar">
+      <div className="knowledge-toolbar-section">
+        <span className="toolbar-label">Backend</span>
+        <StatusBadge
+          status={
+            backendStatus === "online"
+              ? "success"
+              : backendStatus === "offline"
+                ? "error"
+                : "neutral"
+          }
+        >
+          {isCheckingHealth
+            ? "Verificando"
+            : backendStatus === "online"
+              ? "Disponible"
+              : "Sin conexion"}
+        </StatusBadge>
+        <button
+          className="secondary-button compact-button"
+          onClick={onRefreshHealth}
+        >
           Reintentar conexion
         </button>
-
-        {healthError ? <p className="panel-note error">{healthError}</p> : null}
       </div>
 
-      <div className="panel-block">
-        <div className="status-row">
-          <span>Indice vectorial</span>
-          <StatusBadge
-            status={
-              indexState.status === "success"
-                ? "success"
-                : indexState.status === "error"
-                  ? "error"
-                  : indexState.status === "warning"
-                    ? "warning"
-                    : "neutral"
-            }
-          >
-            {indexState.status === "loading"
-              ? "Indexando"
-              : indexState.status === "success"
-                ? "Actualizado"
-                : indexState.status === "error"
-                  ? "Error"
-                  : indexState.status === "warning"
-                    ? "Revision"
-                    : "Pendiente"}
-          </StatusBadge>
-        </div>
-
+      <div className="knowledge-toolbar-section">
+        <span className="toolbar-label">Vault</span>
+        <StatusBadge
+          status={
+            indexState.status === "success"
+              ? "success"
+              : indexState.status === "error"
+                ? "error"
+                : indexState.status === "warning"
+                  ? "warning"
+                  : "neutral"
+          }
+        >
+          {indexState.status === "loading"
+            ? "Indexando"
+            : indexState.status === "success"
+              ? "Actualizado"
+              : indexState.status === "error"
+                ? "Error"
+                : indexState.status === "warning"
+                  ? "Revision"
+                  : "Pendiente"}
+        </StatusBadge>
         <button
-          className="primary-button"
+          className="primary-button compact-button"
           onClick={handleIndex}
           disabled={indexState.status === "loading"}
         >
-          {indexState.status === "loading"
-            ? "Indexando vault..."
-            : "Indexar Obsidian Vault"}
+          {indexState.status === "loading" ? "Indexando..." : "Indexar vault"}
         </button>
-
-        <p className="panel-note">
-          Recorre los documentos del vault y actualiza la base vectorial para
-          respuestas con contexto.
-        </p>
-
-        {indexState.message ? (
-          <p
-            className={`panel-note ${
-              indexState.status === "error" ? "error" : "success"
-            }`}
-          >
-            {indexState.message}
-          </p>
-        ) : null}
       </div>
+
+      {healthError ? <p className="toolbar-note error">{healthError}</p> : null}
+      {indexState.message ? (
+        <p
+          className={`toolbar-note ${
+            indexState.status === "error" ? "error" : "success"
+          }`}
+        >
+          {indexState.message}
+        </p>
+      ) : null}
     </section>
   );
 }

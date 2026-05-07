@@ -118,8 +118,8 @@ code {
   min-width: 0;
 }
 
-.brand-card,
-.knowledge-panel,
+.conversation-sidebar,
+.knowledge-toolbar,
 .chat-shell {
   border: 1px solid var(--card-border);
   border-radius: 18px;
@@ -128,19 +128,28 @@ code {
   box-shadow: var(--card-shadow);
 }
 
-.brand-card {
-  padding: 28px;
-  margin-bottom: 20px;
+.sidebar {
+  display: flex;
 }
 
-.brand-header {
+.main-panel {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.conversation-sidebar-header,
+.conversation-item-top,
+.knowledge-toolbar,
+.knowledge-toolbar-section,
+.chat-header {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
 }
 
-.brand-card h1,
+.conversation-sidebar h2,
 .chat-header h2,
 .panel-header h2 {
   margin: 0;
@@ -149,10 +158,12 @@ code {
   letter-spacing: -0.04em;
 }
 
-.brand-copy {
-  margin: 16px 0 0;
-  color: var(--text-muted);
-  max-width: 28ch;
+.conversation-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 100%;
+  padding: 20px;
 }
 
 .eyebrow {
@@ -164,44 +175,93 @@ code {
   font-weight: 700;
 }
 
-.knowledge-panel {
-  padding: 24px;
-}
-
-.panel-header {
-  margin-bottom: 24px;
-}
-
-.panel-block {
-  padding: 18px;
-  border-radius: 14px;
-  background: var(--panel-bg);
-}
-
-.panel-block + .panel-block {
-  margin-top: 14px;
-}
-
-.status-row,
-.composer-actions,
-.chat-header {
+.conversation-list {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.panel-note {
-  margin: 12px 0 0;
+.conversation-item {
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  background: var(--soft-surface-strong);
+  color: var(--text-primary);
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    transform 160ms ease;
+}
+
+.conversation-item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
+.conversation-item.active {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: linear-gradient(135deg, rgba(36, 36, 36, 0.96), rgba(18, 18, 18, 0.98));
+}
+
+.conversation-item-top strong,
+.conversation-item-top span,
+.conversation-item p {
+  display: block;
+}
+
+.conversation-item-top strong {
+  font-size: 0.96rem;
+}
+
+.conversation-item-top span {
   color: var(--text-muted);
-  font-size: 0.95rem;
+  font-size: 0.76rem;
+  white-space: nowrap;
 }
 
-.panel-note.error {
+.conversation-item p {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.sidebar-action-button {
+  width: 100%;
+}
+
+.knowledge-toolbar {
+  flex-wrap: wrap;
+  padding: 14px 18px;
+}
+
+.knowledge-toolbar-section {
+  flex-wrap: wrap;
+}
+
+.toolbar-label {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.toolbar-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.toolbar-note.error {
   color: var(--status-error-text);
 }
 
-.panel-note.success {
+.toolbar-note.success {
   color: var(--status-success-text);
 }
 
@@ -286,6 +346,13 @@ code {
   border-color: rgba(45, 212, 191, 0.58);
 }
 
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 .composer-hint {
   margin: 0;
   color: var(--text-muted);
@@ -294,7 +361,7 @@ code {
 
 .primary-button,
 .secondary-button {
-  border-radius: 999px;
+  border-radius: 14px;
   padding: 12px 18px;
   font-weight: 700;
   transition:
@@ -312,6 +379,11 @@ code {
 .secondary-button {
   background: var(--secondary-button-bg);
   color: var(--secondary-button-text);
+}
+
+.compact-button {
+  padding: 8px 12px;
+  font-size: 0.84rem;
 }
 
 .primary-button:hover,
@@ -407,13 +479,23 @@ code {
     grid-template-columns: 1fr;
   }
 
+  .sidebar {
+    order: 2;
+  }
+
+  .main-panel {
+    order: 1;
+  }
+
   .chat-shell {
     min-height: auto;
   }
 
-  .brand-header {
-    flex-direction: column;
+  .knowledge-toolbar,
+  .knowledge-toolbar-section,
+  .conversation-sidebar-header {
     align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -423,15 +505,15 @@ code {
     gap: 16px;
   }
 
-  .brand-card,
-  .knowledge-panel,
+  .conversation-sidebar,
+  .knowledge-toolbar,
   .chat-shell {
     border-radius: 16px;
   }
 
   .chat-header,
-  .status-row,
-  .composer-actions {
+  .composer-actions,
+  .conversation-item-top {
     align-items: flex-start;
     flex-direction: column;
   }

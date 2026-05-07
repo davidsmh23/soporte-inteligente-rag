@@ -1,5 +1,5 @@
-import { ThemeToggle } from "./components/ThemeToggle";
 import { ChatShell } from "./features/chat/components/ChatShell";
+import { ConversationSidebar } from "./features/chat/components/ConversationSidebar";
 import { KnowledgePanel } from "./features/knowledge/components/KnowledgePanel";
 import { useChat } from "./features/chat/hooks/useChat";
 import { useTheme } from "./hooks/useTheme";
@@ -7,6 +7,8 @@ import { useTheme } from "./hooks/useTheme";
 function App() {
   const { theme, toggleTheme } = useTheme();
   const {
+    conversations,
+    activeConversationId,
     messages,
     backendStatus,
     isCheckingHealth,
@@ -14,21 +16,30 @@ function App() {
     sendMessage,
     refreshHealth,
     healthError,
+    createNewConversation,
+    selectConversation,
   } = useChat();
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <ThemeToggle theme={theme} onToggle={toggleTheme} />
+        <ConversationSidebar
+          conversations={conversations}
+          activeConversationId={activeConversationId}
+          onSelectConversation={selectConversation}
+          onCreateConversation={createNewConversation}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
+      </aside>
+
+      <main className="main-panel">
         <KnowledgePanel
           backendStatus={backendStatus}
           healthError={healthError}
           isCheckingHealth={isCheckingHealth}
           onRefreshHealth={refreshHealth}
         />
-      </aside>
-
-      <main className="main-panel">
         <ChatShell
           messages={messages}
           backendStatus={backendStatus}
