@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   DEFAULT_USER_ID,
   DEFAULT_USER_TOKEN,
   createConversation,
-  getAgentStatus,
-  getBackendHealth,
   getConversation,
   listConversations,
   streamPrompt,
@@ -109,19 +107,19 @@ function getConversationPreview(messages) {
 }
 
 export function useChat() {
-  const [userId, setUserId] = useState(DEFAULT_USER_ID);
-  const [userToken, setUserToken] = useState(DEFAULT_USER_TOKEN);
+  const [loginUserId, setLoginUserId] = useState(DEFAULT_USER_ID);
+  const [loginUserToken, setLoginUserToken] = useState(DEFAULT_USER_TOKEN);
+  const [userId, setUserId] = useState("");
+  const [userToken, setUserToken] = useState("");
   const [conversations, setConversations] = useState([]);
   const [messagesByConversation, setMessagesByConversation] = useState({});
   const [chatModeByConversation, setChatModeByConversation] = useState({});
   const [tracesByConversation, setTracesByConversation] = useState({});
   const [activeConversationId, setActiveConversationId] = useState(null);
-  const [backendStatus, setBackendStatus] = useState("checking");
-  const [agentStatus, setAgentStatus] = useState(null);
-  const [isCheckingHealth, setIsCheckingHealth] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isLoadingConversations, setIsLoadingConversations] = useState(true);
-  const [healthError, setHealthError] = useState("");
   const [uiError, setUiError] = useState("");
 
   const syncConversationState = (detail) => {
@@ -141,34 +139,6 @@ export function useChat() {
             : conversation,
         ),
       );
-    }
-  };
-
-  const refreshHealth = async () => {
-    setIsCheckingHealth(true);
-    setHealthError("");
-
-    try {
-      await getBackendHealth();
-      setBackendStatus("online");
-    } catch (error) {
-      setBackendStatus("offline");
-      setHealthError(getErrorMessage(error));
-    } finally {
-      setIsCheckingHealth(false);
-    }
-  };
-
-  const refreshAgent = async (currentUserId = userId, currentUserToken = userToken) => {
-    try {
-      const status = await getAgentStatus({
-        userId: currentUserId,
-        userToken: currentUserToken,
-      });
-      setAgentStatus(status);
-    } catch (error) {
-      setAgentStatus(null);
-      setUiError(getErrorMessage(error));
     }
   };
 
@@ -192,7 +162,7 @@ export function useChat() {
         const created = await createConversation({
           userId: currentUserId,
           userToken: currentUserToken,
-          title: "Nueva conversacion",
+          title: "Nueva Conversación",
         });
         const seedMessages = [createWelcomeMessage()];
         setConversations([created]);
@@ -241,47 +211,6 @@ export function useChat() {
     }
   };
 
-  useEffect(() => {
-    let active = true;
-
-    const bootstrap = async () => {
-      setUiError("");
-      await refreshHealth();
-      if (!active) {
-        return;
-      }
-
-      await refreshAgent(userId, userToken);
-      if (!active) {
-        return;
-      }
-
-      const conversationId = await refreshConversations({
-        currentUserId: userId,
-        currentUserToken: userToken,
-        preserveActive: false,
-      });
-
-      if (!active || !conversationId) {
-        return;
-      }
-
-      await loadConversationDetail(conversationId, userId, userToken);
-    };
-
-    bootstrap();
-
-    const interval = window.setInterval(() => {
-      refreshHealth();
-      refreshAgent(userId, userToken);
-    }, 15000);
-
-    return () => {
-      active = false;
-      window.clearInterval(interval);
-    };
-  }, [userId, userToken]);
-
   const activeConversation = useMemo(
     () =>
       conversations.find(
@@ -313,14 +242,59 @@ export function useChat() {
     .find((message) => Array.isArray(message.references) && message.references.length > 0)
     ?.references || [];
 
+  const login = async () => {
+    // Validacion desactivada temporalmente para permitir acceso libre al frontend.
+    const nextUserId = loginUserId.trim() || DEFAULT_USER_ID;
+    const nextUserToken = loginUserToken.trim() || DEFAULT_USER_TOKEN;
+
+    setUiError("");
+    setIsAuthenticating(true);
+
+    try {
+      const conversationId = await refreshConversations({
+        currentUserId: nextUserId,
+        currentUserToken: nextUserToken,
+        preserveActive: false,
+      });
+
+      if (!conversationId) {
+        return false;
+      }
+
+      const detail = await loadConversationDetail(
+        conversationId,
+        nextUserId,
+        nextUserToken,
+      );
+
+      if (!detail) {
+        return false;
+      }
+
+      setUserId(nextUserId);
+      setUserToken(nextUserToken);
+      setIsAuthenticated(true);
+      return true;
+    } catch (error) {
+      setUiError(getErrorMessage(error));
+      return false;
+    } finally {
+      setIsAuthenticating(false);
+    }
+  };
+
   const createNewConversation = async () => {
+    if (!isAuthenticated) {
+      return;
+    }
+
     setUiError("");
 
     try {
       const created = await createConversation({
         userId,
         userToken,
-        title: "Nueva conversacion",
+        title: "Nueva Conversación",
       });
 
       setConversations((current) => [created, ...current]);
@@ -335,11 +309,31 @@ export function useChat() {
   };
 
   const selectConversation = async (conversationId) => {
+    if (!isAuthenticated) {
+      return [];
+    }
+
     setActiveConversationId(conversationId);
 
     if (!messagesByConversation[conversationId]) {
-      await loadConversationDetail(conversationId);
+      const detail = await loadConversationDetail(conversationId);
+      return detail ? ensureMessages(detail.messages) : [];
     }
+
+    return ensureMessages(messagesByConversation[conversationId]);
+  };
+
+  const getConversationMessages = async (conversationId) => {
+    if (!conversationId) {
+      return [];
+    }
+
+    if (messagesByConversation[conversationId]) {
+      return ensureMessages(messagesByConversation[conversationId]);
+    }
+
+    const detail = await loadConversationDetail(conversationId);
+    return detail ? ensureMessages(detail.messages) : [];
   };
 
   const appendTrace = (conversationId, event) => {
@@ -350,7 +344,7 @@ export function useChat() {
   };
 
   const sendMessage = async (content) => {
-    if (!activeConversation || isSending) {
+    if (!isAuthenticated || !activeConversation || isSending) {
       return;
     }
 
@@ -514,10 +508,14 @@ export function useChat() {
   };
 
   return {
+    loginUserId,
+    setLoginUserId,
+    loginUserToken,
+    setLoginUserToken,
+    login,
+    isAuthenticated,
+    isAuthenticating,
     userId,
-    setUserId,
-    userToken,
-    setUserToken,
     conversations: conversations.map((conversation, index) => ({
       ...conversation,
       title: deriveConversationTitle(conversation, index + 1),
@@ -532,18 +530,12 @@ export function useChat() {
     latestReferences,
     currentMode,
     modeLabel: MODE_LABELS[currentMode] || currentMode,
-    backendStatus,
-    agentStatus,
-    isCheckingHealth,
     isSending,
     isLoadingConversations,
     sendMessage,
-    refreshHealth,
-    refreshAgent,
-    refreshConversations,
-    healthError,
     uiError,
     createNewConversation,
     selectConversation,
+    getConversationMessages,
   };
 }

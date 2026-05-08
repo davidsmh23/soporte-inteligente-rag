@@ -1,186 +1,138 @@
 # Asistente de Soporte Inteligente (V2)
 
-> Sistema RAG para equipos de soporte técnico que combina una base de conocimiento en Obsidian con Google Gemini para resolver tickets de forma asistida.
+Sistema de soporte tecnico con RAG sobre Obsidian + flujo conversacional con Codex CLI.
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue)
-![Docker](https://img.shields.io/badge/docker-multiplataforma-2496ED?logo=docker)
-![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi)
-![LangChain](https://img.shields.io/badge/LangChain-orquestador-1C3C3C)
-![Gemini](https://img.shields.io/badge/Google%20Gemini-API-4285F4?logo=google)
+## Novedades
 
----
-
-## ¿Qué hace este proyecto?
-
-Un agente de soporte introduce un ticket en la interfaz web. El sistema busca en una base de conocimiento propia (archivos `.md` de Obsidian) documentos similares y utiliza Gemini para generar una respuesta precisa citando las fuentes relevantes.
-
----
-
-## Stack tecnológico
-
-| Componente          | Tecnología                           |
-|---------------------|--------------------------------------|
-| Interfaz web        | Streamlit                            |
-| API Backend         | FastAPI + Uvicorn                    |
-| Orquestador         | LangChain                            |
-| Base de datos vectorial | ChromaDB                         |
-| Embeddings          | `gemini-embedding-2`                 |
-| LLM principal       | `gemini-2.0-flash`                   |
-| Infraestructura     | Docker Compose (amd64 / arm64)       |
-| Base de conocimiento | Obsidian Vault (`.md`)              |
-
----
+- Flujo RAG determinista (Top-1 + umbral).
+- Si hay match:
+  - respuesta con referencia explicita al ticket original (`id_ticket`)
+  - nombre del `.md`
+  - pasos completos de `# Solucion Exitosa`
+- Si no hay match:
+  - fallback automatico a chat conversacional con Codex.
+- `local_agent` ejecuta lookup MCP solo en el primer mensaje de cada `session_id`.
+- Si ese primer lookup no resuelve (o falla), la sesion pasa a `chat_generico` y no repite triage en esa sesion.
+- UI muestra trazas MCP/Codex y referencias por ticket.
+- Corregido error MCP `422` en `POST /mcp` (parseo de body JSON-RPC).
 
 ## Arquitectura
 
-El proyecto está dividido en tres servicios independientes:
+Servicios:
 
-```mermaid
-graph TD
-    Agente(Agente de Soporte)
-    Obsidian[(Obsidian Vault .md)]
-    GeminiAPI((Google Gemini API))
+- `frontend` (Streamlit)
+- `backend` (FastAPI + RAG + Chroma lookup)
+- `mcp-server` (tooling MCP via JSON-RPC)
+- `session-gateway` (bridge Streamlit <-> local_agent)
+- `chromadb` (vector DB)
+- `local_agent` (proceso local del usuario con Codex CLI)
 
-    subgraph "frontend :8501 — Streamlit"
-        UI[Interfaz Web]
-    end
+Flujo:
 
-    subgraph "backend :8000 — FastAPI"
-        API[API REST]
-        RAG[Servicio RAG]
-        LLM[Servicio LLM]
-    end
+1. Streamlit envia prompt a `session-gateway`.
+2. `session-gateway` lo enruta al `local_agent` por WebSocket.
+3. En el primer mensaje de un `session_id`, `local_agent` llama `support_lookup_ticket` (MCP).
+4. Si `resolved=true`, responde con solucion historica referenciada y la sesion queda en `resuelto_por_referencia`.
+5. Si `resolved=false` o el lookup falla, la sesion pasa a `chat_generico`.
+6. En `chat_generico`, siguientes mensajes van directos a `codex exec` conversacional sin nuevo lookup MCP.
+   - Se ejecuta en `cwd` aislado, con `shell_tool` deshabilitado y sin inspeccion local del repo.
 
-    subgraph "chromadb :8000 — ChromaDB"
-        VDB[(Base Vectorial)]
-    end
+## Puertos
 
-    Agente -- ticket --> UI
-    UI -- POST /api/v1/chat --> API
-    UI -- POST /api/v1/knowledge/index --> API
-    API --> RAG
-    RAG --> LLM
-    RAG -- búsqueda semántica --> VDB
-    LLM -- genera respuesta --> GeminiAPI
-    Obsidian -- indexación --> RAG
-    RAG -- embeddings --> VDB
-```
+- Frontend: `8501`
+- Backend: `8502`
+- MCP server: `8100`
+- Session gateway: `9000`
+- ChromaDB: `8033`
 
----
-
-## Estructura del proyecto
-
-```
-.
-├── backend/                    # API FastAPI (lógica de negocio)
-│   ├── main.py                 # Punto de entrada de la API
-│   ├── config.py               # Configuración centralizada vía env vars
-│   ├── api/
-│   │   └── v1/
-│   │       ├── router.py       # Agrega todas las rutas v1
-│   │       ├── chat.py         # POST /api/v1/chat/
-│   │       └── knowledge.py    # POST /api/v1/knowledge/index
-│   ├── services/
-│   │   ├── rag_service.py      # Lógica de triage + RAG
-│   │   ├── llm_service.py      # Factory de LLM y embeddings (Gemini)
-│   │   └── vectordb_service.py # Conexión a ChromaDB
-│   ├── models/
-│   │   ├── chat.py             # Schemas de request/response del chat
-│   │   └── knowledge.py        # Schema de respuesta de indexación
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── frontend/                   # Interfaz Streamlit (solo UI)
-│   ├── app.py                  # Chat + sidebar, llama al backend vía HTTP
-│   ├── requirements.txt
-│   └── Dockerfile
-│
-├── obsidian_vault/             # Base de conocimiento (.md)
-├── tickets_prueba/             # Tickets de ejemplo para pruebas
-├── docker-compose.yml
-├── .env.example
-└── Readme.md
-```
-
----
-
-## Flujo de triage
-
-Cuando el agente envía el **primer ticket**, el backend aplica lógica de triage:
-
-| Ruta | Condición | Comportamiento |
-|------|-----------|----------------|
-| **RAG** | Similitud L2 < 0.6 | Respuesta basada en Obsidian con citación de fuentes |
-| **Chat libre** | Similitud L2 ≥ 0.6 | El LLM guía al agente a través de pasos de debug |
-| **Conversación** | Mensajes posteriores | Chat libre con historial completo |
-
----
-
-## Inicio rápido
+## Inicio rapido
 
 ```bash
-git clone https://github.com/<tu-usuario>/<tu-repo>.git
+git clone https://github.com/<tu-org>/<tu-repo>.git
 cd <tu-repo>
-cp .env.example .env   # Añade tu GOOGLE_API_KEY
-docker compose up --build
+cp .env.example .env
+docker compose up -d --build
 ```
 
-| Servicio   | URL                       |
-|------------|---------------------------|
-| Frontend   | http://localhost:8501     |
-| Backend API | http://localhost:8000    |
-| API Docs   | http://localhost:8000/docs|
-| ChromaDB   | http://localhost:8033     |
+Abrir:
 
-### Primeros pasos tras el arranque
+- `http://185.57.173.233:8501`
 
-1. Abre `http://localhost:8501`
-2. Haz clic en **"🔄 Indexar Obsidian Vault"** en la barra lateral
-3. Escribe un ticket de soporte en el chat
+## Variables de entorno clave
 
----
+Servidor (`.env`):
 
-## Variables de entorno
+- `EMBEDDING_API_KEY`: clave para embeddings.
+- `MCP_BEARER_TOKEN`: token de autenticacion MCP.
+- `SESSION_USER_TOKENS`: mapa `user:token`.
+- `DEFAULT_USER_ID`
+- `DEFAULT_USER_TOKEN`
 
-| Variable | Obligatoria | Por defecto | Descripción |
-|----------|------------|-------------|-------------|
-| `GOOGLE_API_KEY` | ✅ | — | Clave de la API de Google Gemini |
-| `CHROMA_HOST` | No | `chromadb` | Host del servicio ChromaDB |
-| `CHROMA_PORT` | No | `8000` | Puerto de ChromaDB |
-| `SIMILARITY_THRESHOLD` | No | `0.6` | Umbral de distancia L2 para el triage |
-| `LLM_MODEL` | No | `gemini-2.0-flash` | Modelo LLM a usar |
-| `EMBEDDING_MODEL` | No | `models/gemini-embedding-2` | Modelo de embeddings |
-| `LLM_TEMPERATURE` | No | `0.2` | Temperatura del LLM (0 = determinista) |
+Cliente local (`local_agent`):
 
----
+- `SESSION_GATEWAY_WS_URL` (ej: `ws://185.57.173.233:9000/ws/agent`)
+- `SESSION_USER_ID`
+- `SESSION_USER_TOKEN`
+- `SUPPORT_MCP_URL` (ej: `http://185.57.173.233:8100/mcp`)
+- `SUPPORT_MCP_TOKEN`
+- `DISABLE_LOCAL_INSPECTION` (default `1`; impide diagnostico mirando archivos locales)
+- `CODEX_EXEC_CWD` (opcional; directorio aislado para `codex exec`)
 
-## Estado del proyecto
+Nota: si `SUPPORT_MCP_TOKEN` no esta definido, `local_agent` intenta cargar `MCP_BEARER_TOKEN` desde `../.env`.
 
-### ✅ Fase A — Resolución y Referencia (completada)
+## Verificacion rapida
 
-- [x] Docker Compose multiplataforma (`linux/amd64`, `linux/arm64`)
-- [x] Arquitectura frontend / backend separados
-- [x] API REST documentada (FastAPI + Swagger)
-- [x] ChromaDB para búsqueda semántica
-- [x] Ingesta y chunking de la base de conocimiento Obsidian
-- [x] Generación de embeddings con `gemini-embedding-2`
-- [x] Flujo RAG completo con citación de fuentes
+```bash
+curl http://185.57.173.233:8502/health
+curl http://185.57.173.233:8100/health
+curl http://185.57.173.233:9000/health
+```
 
-### 🔜 Fase B — Extracción y Curación (próxima)
+En UI deben verse:
 
-Automatizar el cierre del ciclo: que cada solución validada se convierta en un nuevo documento en la base de conocimiento.
+- `Backend conectado`
+- `Agente local: Conectado y libre`
+- Indicador de modo (`Triage inicial` / `Chat generico`) por `session_id`.
 
-1. **Human-in-the-Loop** — Botón "Marcar como solución" en la interfaz para validar el cierre.
-2. **Limpieza asíncrona** — LLM secundario que resume la conversación.
-3. **Generación de `.md`** — Creación automática del archivo en el vault de Obsidian.
-4. **Estructura de metadatos** — Cada archivo generado seguirá este formato:
+Reset de triage:
 
-```yaml
----
-id_ticket: #[ID]
-tecnologia: [Etiquetas]
-autor: [Agente_Nombre]
----
-# Problema: [Resumen]
-# Solución Exitosa: [Código/Pasos]
+- Cambiar `Session ID` en sidebar inicia una sesion nueva y vuelve a habilitar el triage inicial.
+
+## Endpoints utiles
+
+- `POST /api/v1/knowledge/index` (backend)
+- `POST /api/v1/rag/lookup` (backend)
+- `POST /mcp` (mcp-server, JSON-RPC)
+- `POST /api/v1/session/prompt` (session-gateway)
+- `GET /api/v1/agents/{user_id}/status` (session-gateway)
+
+## Troubleshooting
+
+### Lookup MCP falla con `HTTP 422`
+
+Recrear `mcp-server`:
+
+```bash
+docker compose up -d --build mcp-server
+```
+
+### `Invalid user token`
+
+- Revisar `SESSION_USER_TOKENS` y token en UI/cliente.
+- Confirmar cabecera `Authorization: Bearer <token>`.
+
+### Backend no levanta
+
+```bash
+docker compose logs --tail 200 backend
+```
+
+### Agente local sin respuesta
+
+- Reiniciar `local_agent`.
+- Revisar bloque `Trazas MCP/Codex` en la UI.
+- Validar estado:
+
+```bash
+curl -H "Authorization: Bearer <token>" http://185.57.173.233:9000/api/v1/agents/demo/status
 ```

@@ -1,25 +1,13 @@
-import { StatusBadge } from "../../../components/StatusBadge";
+import { useEffect, useRef } from "react";
+
 import { SourceList } from "../../../components/SourceList";
 import { ChatComposer } from "./ChatComposer";
 import { ChatMessage } from "./ChatMessage";
-
-function getBackendBadge(backendStatus) {
-  if (backendStatus === "online") {
-    return { tone: "success", label: "Backend conectado" };
-  }
-
-  if (backendStatus === "offline") {
-    return { tone: "error", label: "Backend no disponible" };
-  }
-
-  return { tone: "neutral", label: "Verificando backend" };
-}
 
 export function ChatShell({
   messages,
   traces,
   references,
-  backendStatus,
   activeConversation,
   currentMode,
   modeLabel,
@@ -27,28 +15,27 @@ export function ChatShell({
   uiError,
   onSendMessage,
 }) {
-  const backendBadge = getBackendBadge(backendStatus);
+  const feedEndRef = useRef(null);
+
+  useEffect(() => {
+    feedEndRef.current?.scrollIntoView({ block: "end" });
+  }, [messages]);
 
   return (
     <section className="chat-shell">
       <header className="chat-header">
         <div>
-          <p className="eyebrow">Consola conversacional</p>
-          <h2>Session Gateway + SSE</h2>
+          <p className="eyebrow">Validacion</p>
+          <h2>Analisis del ticket</h2>
           <div className="chat-header-meta">
             <span>
               Conversacion: <code>{activeConversation?.conversation_id || "-"}</code>
-            </span>
-            <span>
-              Codex Session:{" "}
-              <code>{activeConversation?.codex_session_id || "Pendiente bind"}</code>
             </span>
             <span>
               Modo: <code>{modeLabel || currentMode}</code>
             </span>
           </div>
         </div>
-        <StatusBadge status={backendBadge.tone}>{backendBadge.label}</StatusBadge>
       </header>
 
       {uiError ? <div className="inline-alert">{uiError}</div> : null}
@@ -57,6 +44,7 @@ export function ChatShell({
         {messages.map((message) => (
           <ChatMessage key={message.id} message={message} />
         ))}
+        <div ref={feedEndRef} aria-hidden="true" />
       </div>
 
       <div className="chat-panels">

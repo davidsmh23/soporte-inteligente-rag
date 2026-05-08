@@ -1,15 +1,15 @@
 from pathlib import Path
+import re
+from functools import lru_cache
 from typing import List
 
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from backend.config import settings
-from backend.models.chat import ChatResponse, Message, MessageRole, TriageRoute
+from backend.models.chat import ChatResponse, Message, TriageRoute
 from backend.models.knowledge import IndexResponse
-from backend.services.llm_service import get_llm
+from backend.models.rag import LookupMatch, LookupResponse
 from backend.services.vectordb_service import get_vector_store
 
 
@@ -44,87 +44,138 @@ def index_vault() -> IndexResponse:
     )
 
 
+def lookup_ticket(ticket_text: str, k: int | None = None, threshold: float | None = None) -> LookupResponse:
+    effective_k = k if k is not None else settings.default_lookup_k
+    effective_threshold = threshold if threshold is not None else settings.similarity_threshold
+
+    results = get_vector_store().similarity_search_with_score(ticket_text, k=effective_k)
+    matches = [_to_lookup_match(doc, score) for doc, score in results]
+
+    is_known = bool(matches) and matches[0].score < effective_threshold
+    route_hint = "resolved_with_reference" if is_known else "fallback_codex_chat"
+
+    return LookupResponse(
+        resolved=is_known,
+        route_hint=route_hint,
+        matches=matches,
+    )
+
+
 def process_chat(messages: List[Message]) -> ChatResponse:
-    llm = get_llm()
-    last_message = messages[-1].content
+    """
+    Compatibility endpoint for previous /chat API contract.
+    No generative LLM is used anymore: this returns deterministic guidance.
+    """
+    if not messages:
+        return ChatResponse(
+            response="No se recibieron mensajes.",
+            route=TriageRoute.FREE_CHAT,
+            sources=[],
+        )
 
-    if len(messages) == 1:
-        return _triage(last_message, llm)
+    lookup = lookup_ticket(messages[-1].content)
 
-    return _continue_conversation(messages, llm)
+    if lookup.resolved:
+        response_lines = [
+            "Se ha encontrado una incidencia similar en la base de conocimiento.",
+            "Referencia principal:",
+            f"- {lookup.matches[0].source}",
+            "",
+            "Fragmento relevante:",
+            lookup.matches[0].snippet,
+        ]
+        return ChatResponse(
+            response="\n".join(response_lines),
+            route=TriageRoute.RAG,
+            sources=[m.source for m in lookup.matches],
+        )
 
-
-# --- rutas de triage ---
-
-def _triage(ticket: str, llm) -> ChatResponse:
-    vector_store = get_vector_store()
-    results = vector_store.similarity_search_with_score(ticket, k=3)
-
-    is_known = bool(results) and results[0][1] < settings.similarity_threshold
-
-    if is_known:
-        return _rag_response(ticket, results, llm)
-    return _free_chat_response(ticket, llm)
-
-
-def _rag_response(ticket: str, results, llm) -> ChatResponse:
-    context = "\n\n".join(doc.page_content for doc, _ in results)
-    sources = [Path(doc.metadata.get("source", "")).name for doc, _ in results]
-
-    system_prompt = (
-        "Eres un asistente de soporte técnico experto. "
-        "Usa los siguientes fragmentos de contexto de Obsidian para resolver el ticket. "
-        "Explica la solución claramente y cita el nombre del archivo al final.\n\n"
-        f"Contexto recuperado:\n{context}"
-    )
-
-    chain = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ]) | llm
-
+    route = TriageRoute.CONVERSATION if len(messages) > 1 else TriageRoute.FREE_CHAT
     return ChatResponse(
-        response=chain.invoke({"input": ticket}).content,
-        route=TriageRoute.RAG,
-        sources=sources,
-    )
-
-
-def _free_chat_response(ticket: str, llm) -> ChatResponse:
-    system_prompt = (
-        "Eres un asistente de soporte técnico avanzado. "
-        "El agente acaba de introducir un ticket que NO está en la base de datos de conocimiento. "
-        "Admite que parece un problema nuevo y guía al agente paso a paso para hacer debug "
-        "o pedir más información (logs, configuraciones)."
-    )
-
-    chain = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ]) | llm
-
-    return ChatResponse(
-        response=chain.invoke({"input": ticket}).content,
-        route=TriageRoute.FREE_CHAT,
+        response=(
+            "No se ha encontrado una resolucion previa en ChromaDB. "
+            "El flujo MCP/Codex CLI debe continuar con chat conversacional."
+        ),
+        route=route,
         sources=[],
     )
 
 
-def _continue_conversation(messages: List[Message], llm) -> ChatResponse:
-    history = [
-        SystemMessage(content="Eres un asistente de soporte técnico. Continúa ayudando al agente a resolver el problema.")
-    ]
+def _to_lookup_match(doc, score: float) -> LookupMatch:
+    source_path = doc.metadata.get("source", "")
+    source_name = Path(source_path).name if source_path else "unknown_source"
+    snippet = _make_snippet(doc.page_content)
+    metadata = {k: v for k, v in doc.metadata.items() if isinstance(k, str)}
+    metadata["source_name"] = source_name
+    source_text = _load_source_text(source_path) if source_path else doc.page_content
+    case = _parse_case_fields(source_text or doc.page_content)
 
-    for msg in messages[:-1]:
-        if msg.role == MessageRole.USER:
-            history.append(HumanMessage(content=msg.content))
-        elif msg.role == MessageRole.ASSISTANT:
-            history.append(AIMessage(content=msg.content))
-
-    history.append(HumanMessage(content=messages[-1].content))
-
-    return ChatResponse(
-        response=llm.invoke(history).content,
-        route=TriageRoute.CONVERSATION,
-        sources=[],
+    return LookupMatch(
+        source=source_name,
+        score=float(score),
+        snippet=snippet,
+        ticket_id=case["ticket_id"],
+        problem_title=case["problem_title"],
+        solution_steps=case["solution_steps"],
+        metadata=metadata,
     )
+
+
+def _make_snippet(text: str, max_len: int = 600) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= max_len:
+        return compact
+    return compact[:max_len].rstrip() + "..."
+
+
+def _parse_case_fields(text: str) -> dict:
+    ticket_id = _extract_ticket_id(text)
+    problem_title = _extract_problem_title(text)
+    solution_steps = _extract_solution_steps(text)
+    return {
+        "ticket_id": ticket_id,
+        "problem_title": problem_title,
+        "solution_steps": solution_steps,
+    }
+
+
+def _extract_ticket_id(text: str) -> str | None:
+    match = re.search(r"(?im)^\s*id_ticket\s*:\s*(#[0-9]+)\s*$", text)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _extract_problem_title(text: str) -> str | None:
+    match = re.search(r"(?im)^\s*#\s*Problema\s*:\s*(.+?)\s*$", text)
+    if match:
+        return match.group(1).strip()
+    return None
+
+
+def _extract_solution_steps(text: str) -> List[str]:
+    lines = text.splitlines()
+    in_solution = False
+    collected: List[str] = []
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not in_solution:
+            if re.match(r"(?i)^#\s*soluci[oó]n\s+exitosa\s*:\s*$", line):
+                in_solution = True
+            continue
+
+        if re.match(r"^#\s+", line):
+            break
+        if line:
+            collected.append(line)
+
+    return collected
+
+
+@lru_cache(maxsize=2048)
+def _load_source_text(path: str) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
